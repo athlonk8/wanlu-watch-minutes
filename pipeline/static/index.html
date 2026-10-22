@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>腕录 · 会议纪要控制台</title>
+<style>
+:root{
+  --bg:#f4f6fb; --card:#ffffff; --line:#e6eaf2; --txt:#1f2937; --sub:#6b7280;
+  --blue:#3b82f6; --blue-d:#2563eb; --red:#ef4444; --red-d:#dc2626; --green:#10b981;
+  --shadow:0 1px 3px rgba(16,24,40,.07),0 1px 2px rgba(16,24,40,.04);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--txt);
+  font-family:-apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif;
+  font-size:14px;line-height:1.55;padding:0 0 60px}
+.wrap{max-width:1180px;margin:0 auto;padding:0 20px}
+
+/* ---- 顶栏 ---- */
+header{background:linear-gradient(135deg,#eef4ff 0%,#f6f8fc 60%);border-bottom:1px solid var(--line)}
+header .wrap{display:flex;align-items:center;gap:14px;padding:20px 0}
+.logo{width:42px;height:42px;border-radius:12px;background:linear-gradient(135deg,#3b82f6,#2563eb);
+  display:flex;align-items:center;justify-content:center;font-size:21px;color:#fff;box-shadow:var(--shadow)}
+header h1{font-size:19px;font-weight:650;letter-spacing:.3px}
+header .tag{color:var(--sub);font-size:12px;margin-top:1px}
+.pill{margin-left:auto;display:flex;align-items:center;gap:7px;background:#fff;border:1px solid var(--line);
+  border-radius:99px;padding:6px 14px;font-size:12.5px;color:var(--sub);box-shadow:var(--shadow)}
+.dot{width:8px;height:8px;border-radius:50%;background:#cbd5e1}
+.dot.on{background:var(--green);box-shadow:0 0 0 3px rgba(16,185,129,.15)}
+.dot.rec{background:var(--red);animation:blink 1.2s infinite}
+@keyframes blink{50%{opacity:.35}}
+
+/* ---- 布局 ---- */
+.grid{display:grid;grid-template-columns:1fr 360px;gap:18px;margin-top:18px}
+@media(max-width:900px){.grid{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;
+  box-shadow:var(--shadow);padding:18px 18px 16px;margin-bottom:18px}
+.card h2{font-size:14.5px;font-weight:650;display:flex;align-items:center;gap:8px;margin-bottom:14px}
+.card h2 .ico{font-size:16px}
+.card h2 .right{margin-left:auto;font-size:12px;font-weight:400;color:var(--sub)}
+
+/* ---- 按钮 ---- */
+button{font-family:inherit;border:none;cursor:pointer;border-radius:10px;font-size:13.5px;
+  transition:all .15s;white-space:nowrap}
+button:disabled{opacity:.45;cursor:not-allowed}
+.btn{padding:8px 16px;background:#fff;border:1px solid var(--line);color:var(--txt);box-shadow:var(--shadow)}
+.btn:hover:not(:disabled){border-color:#c9d4e8;background:#f8fafd}
+.btn-blue{background:var(--blue);color:#fff;padding:8px 18px}
+.btn-blue:hover:not(:disabled){background:var(--blue-d)}
+.btn-red{background:var(--red);color:#fff;padding:8px 18px}
+.btn-red:hover:not(:disabled){background:var(--red-d)}
+.btn-sm{padding:5px 12px;font-size:12.5px}
+
+/* ---- 录音控制 ---- */
+.recbar{display:flex;gap:14px}
+.recbtn{flex:1;border-radius:12px;padding:16px 10px 13px;display:flex;flex-direction:column;
+  align-items:center;gap:3px;font-size:14px;font-weight:600;box-shadow:var(--shadow)}
+.recbtn .glyph{font-size:22px;line-height:1}
+.recbtn small{font-weight:400;font-size:11px;opacity:.75}
+.recbtn.start{background:linear-gradient(160deg,#f0f6ff,#e4eeff);color:var(--blue-d);border:1px solid #cfe0fb}
+.recbtn.start:hover:not(:disabled){background:linear-gradient(160deg,#e7f1ff,#d8e8ff)}
+.recbtn.stop{background:linear-gradient(160deg,#fef1f1,#fee4e4);color:var(--red-d);border:1px solid #fbd5d5}
+.recbtn.stop:hover:not(:disabled){background:linear-gradient(160deg,#fde7e7,#fbd7d7)}
+.recbtn.stop.live{animation:pulse 1.4s infinite}
+.recbtn:disabled{filter:grayscale(.65);opacity:.55;box-shadow:none}
+.recbtn:disabled small{visibility:hidden}
+@keyframes pulse{50%{box-shadow:0 0 0 5px rgba(239,68,68,.12)}}
+.devrow{display:flex;gap:8px;align-items:center;margin-top:12px}
+select,input[type=text],input[type=password]{font-family:inherit;border:1px solid var(--line);
+  border-radius:8px;padding:7px 10px;font-size:13px;background:#fff;color:var(--txt);outline:none;min-width:0}
+select:focus,input:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(59,130,246,.12)}
+.devrow select{flex:1}
+.hint{font-size:11.5px;color:#9aa4b2;margin-top:8px}
+
+/* ---- 文件列表 ---- */
+.tabs{display:flex;gap:4px;background:#eef1f7;border-radius:9px;padding:3px;margin-bottom:12px;width:max-content}
+.tabs button{padding:5px 14px;border-radius:7px;background:none;color:var(--sub);font-size:12.5px;font-weight:500}
+.tabs button.on{background:#fff;color:var(--txt);box-shadow:var(--shadow)}
+.flist{max-height:250px;overflow:auto;border:1px solid var(--line);border-radius:10px}
+.fitem{display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid #f1f3f8}
+.fitem:last-child{border-bottom:none}
+.fitem:hover{background:#f8fafd}
+.fitem input{accent-color:var(--blue);width:15px;height:15px;cursor:pointer}
+.fitem .fico{font-size:15px}
+.fitem .fname{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}
+.fitem .fsize{color:#9aa4b2;font-size:11.5px}
+.empty{padding:26px;text-align:center;color:#9aa4b2;font-size:12.5px}
+.factions{display:flex;gap:10px;margin-top:12px;align-items:center}
+.confirm{display:none;margin-top:12px;background:#fff8e6;border:1px solid #f5e0a3;border-radius:10px;
+  padding:10px 14px;font-size:12.5px;color:#8a6d1a;align-items:center;gap:10px}
+.confirm.show{display:flex}
+.confirm b{color:#70570f}
+
+/* ---- 任务 ---- */
+.job{display:flex;align-items:center;gap:10px;padding:10px 4px;border-bottom:1px solid #f1f3f8}
+.job:last-child{border:none}
+.job .jname{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.job .jlog{flex:2;color:#9aa4b2;font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chip{font-size:11px;padding:2px 9px;border-radius:99px;font-weight:500}
+.chip.queued{background:#eef1f7;color:var(--sub)}
+.chip.running{background:#e5efff;color:var(--blue-d)}
+.chip.done{background:#e7f8f1;color:#0b7a5c}
+.chip.error{background:#fdeaea;color:#b91c1c}
+
+/* ---- 结果 ---- */
+.reswrap{display:grid;grid-template-columns:210px 1fr;gap:14px;min-height:240px}
+.reslist{border:1px solid var(--line);border-radius:10px;overflow:auto;max-height:360px}
+.ritem{padding:9px 12px;border-bottom:1px solid #f1f3f8;cursor:pointer;font-size:12.5px}
+.ritem:hover{background:#f8fafd}
+.ritem.on{background:#eef4ff;color:var(--blue-d);font-weight:600}
+.ritem small{display:block;color:#9aa4b2;font-weight:400;font-size:11px}
+.rview{border:1px solid var(--line);border-radius:10px;overflow:auto;max-height:360px;padding:16px 20px}
+.rview pre{white-space:pre-wrap;font-size:12px;color:var(--sub);font-family:Consolas,monospace}
+.md h1{font-size:17px;margin:4px 0 10px}
+.md h2{font-size:14.5px;margin:16px 0 8px;padding-bottom:5px;border-bottom:1px solid var(--line)}
+.md h3{font-size:13.5px;margin:12px 0 6px}
+.md p{margin:7px 0}
+.md li{margin:3px 0 3px 20px}
+.md table{border-collapse:collapse;margin:10px 0;width:100%;font-size:12.5px}
+.md th,.md td{border:1px solid var(--line);padding:6px 10px;text-align:left}
+.md th{background:#f8fafc}
+.md code{background:#f1f3f8;border-radius:4px;padding:1px 5px;font-size:12px}
+.md hr{border:none;border-top:1px solid var(--line);margin:12px 0}
+
+/* ---- 设置表单 ---- */
+.field{margin-bottom:13px}
+.field label{display:block;font-size:12.5px;font-weight:600;margin-bottom:5px}
+.field label .opt{color:#9aa4b2;font-weight:400}
+.field input,.field select{width:100%}
+.field .desc{font-size:11px;color:#9aa4b2;margin-top:4px}
+.switch{display:flex;align-items:center;gap:9px;cursor:pointer;user-select:none}
+.switch input{display:none}
+.track{width:36px;height:20px;border-radius:99px;background:#d7dde8;position:relative;transition:.18s;flex:none}
+.track::after{content:"";position:absolute;width:16px;height:16px;border-radius:50%;background:#fff;
+  top:2px;left:2px;transition:.18s;box-shadow:0 1px 2px rgba(0,0,0,.2)}
+.switch input:checked+.track{background:var(--blue)}
+.switch input:checked+.track::after{left:18px}
+.savebar{display:flex;gap:10px;align-items:center;margin-top:6px}
+.okmsg{color:var(--green);font-size:12px;display:none}
+.okmsg.show{display:inline}
+.eye{border:1px solid var(--line);background:#fff;padding:7px 10px;margin-left:-1px;border-radius:0 8px 8px 0}
+.keywrap{display:flex}
+
+/* ---- 说明/Toast ---- */
+.steps li{margin:6px 0 6px 20px;color:var(--sub);font-size:12.5px}
+.steps b{color:var(--txt)}
+#toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%) translateY(20px);
+  background:#111827;color:#fff;padding:10px 20px;border-radius:99px;font-size:13px;
+  opacity:0;transition:.25s;pointer-events:none;box-shadow:0 8px 24px rgba(0,0,0,.25);max-width:80vw}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+#toast.err{background:#b91c1c}
+</style>
+</head>
+<body>
+
+<header><div class="wrap">
+  <div class="logo">&#127908;</div>
+  <div>
+    <h1>腕录 · 会议纪要</h1>
+    <div class="tag">手表录音 &#8594; 百炼转写 &#8594; 智能纪要</div>
+  </div>
+  <div class="pill"><span class="dot" id="connDot"></span><span id="connTxt">未连接手表</span></div>
+</div></header>
+
+<div class="wrap"><div class="grid">
+  <!-- 左列 -->
+  <div>
+    <div class="card">
+      <h2><span class="ico">&#9201;</span>手表录音</h2>
+      <div class="recbar">
+        <button class="recbtn start" id="btnStart">
+          <span class="glyph">&#9654;</span>开始录音<small>点按后手表立即开始</small>
+        </button>
+        <button class="recbtn stop" id="btnStop">
+          <span class="glyph">&#9632;</span>结束录音<small>录音保存在手表本地</small>
+        </button>
+      </div>
+      <div class="devrow">
+        <select id="devSel" title="选择手表设备"></select>
+        <button class="btn btn-sm" id="btnRefresh">刷新</button>
+      </div>
+      <div class="devrow">
+        <input type="text" id="watchAddr" placeholder="无线ADB地址,如 192.168.1.8:5555" style="flex:1">
+        <button class="btn btn-sm" id="btnConnect">连接</button>
+      </div>
+      <div class="hint" id="watchHint">手表与电脑连同一 WiFi 后填地址点「连接」;或 USB 连接后从上方下拉框选择。</div>
+    </div>
+
+    <div class="card">
+      <h2><span class="ico">&#128194;</span>录音文件
+        <span class="right" id="fileCount"></span></h2>
+      <div class="tabs">
+        <button id="tabWatch" class="on">手表上的</button>
+        <button id="tabLocal">本地待解析</button>
+      </div>
+      <div class="flist" id="fileList"></div>
+      <div class="confirm" id="confirmBar"></div>
+      <div class="factions">
+        <button class="btn" id="btnPull">&#8681; 拉取选中到本地</button>
+        <button class="btn btn-blue" id="btnUpload">&#9729; 上传百炼解析</button>
+      </div>
+      <div class="hint">上传才会调用 API(按量计费);只拉取到本地不产生费用。</div>
+    </div>
+
+    <div class="card">
+      <h2><span class="ico">&#9881;&#65039;</span>解析任务</h2>
+      <div id="jobs"><div class="empty">暂无任务 — 勾选录音后点「上传百炼解析」</div></div>
+    </div>
+
+    <div class="card">
+      <h2><span class="ico">&#128196;</span>解析结果
+        <span class="right" id="resActions">
+          <button class="btn btn-sm" id="btnToPhone" title="推送到手机Download/腕录纪要">&#128241; 发到手机</button>
+          <button class="btn btn-sm" id="btnToCloud" title="同步到云端(钉钉/飞书/Webhook)">&#9729; 云同步</button>
+          <button class="btn btn-sm" id="btnDlMd">&#8681; 下载.md</button>
+        </span></h2>
+      <div class="reswrap">
+        <div class="reslist" id="resList"></div>
+        <div>
+          <div class="tabs" style="margin-bottom:10px">
+            <button id="rtabT" class="on">转写</button>
+            <button id="rtabM">会议纪要</button>
+            <button id="rtabR">原始JSON</button>
+          </div>
+          <div class="rview" id="resView"><div class="empty">左侧选择一条结果</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 右列 -->
+  <div>
+    <div class="card">
+      <h2><span class="ico">&#127760;</span>百炼 API 设置</h2>
+      <div class="field">
+        <label>API Key <span class="opt">DASHSCOPE_API_KEY</span></label>
+        <div class="keywrap">
+          <input type="password" id="apiKey" placeholder="必填;bailian.console.aliyun.com 获取">
+          <button class="eye" id="btnEye" title="显示/隐藏">&#128065;</button>
+        </div>
+        <div class="desc" id="apiKeyDesc"></div>
+      </div>
+      <div class="field">
+        <label>转写模型</label>
+        <select id="asrModel">
+          <option value="paraformer-v2">paraformer-v2(推荐 · 说话人分离)</option>
+          <option value="paraformer-8k-v2">paraformer-8k-v2(8kHz 电话音)</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>识别语种</label>
+        <input type="text" id="langHints" placeholder="zh,en">
+      </div>
+      <div class="field">
+        <label>说话人分离</label>
+        <label class="switch"><input type="checkbox" id="diar" checked><span class="track"></span>
+          <span style="font-size:12.5px;color:var(--sub)">区分不同发言人(会议建议开)</span></label>
+      </div>
+      <div class="field">
+        <label>生成会议纪要</label>
+        <label class="switch"><input type="checkbox" id="minEn" checked><span class="track"></span>
+          <span style="font-size:12.5px;color:var(--sub)">关闭则只转写不生成纪要</span></label>
+      </div>
+      <div class="field">
+        <label>纪要模型 · 服务商</label>
+        <select id="minBase">
+          <option value="https://dashscope.aliyuncs.com/compatible-mode/v1">阿里百炼</option>
+          <option value="https://open.bigmodel.cn/api/paas/v4">智谱 GLM</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>纪要模型名</label>
+        <select id="minModel">
+          <option>qwen-plus</option><option>qwen-turbo</option><option>qwen-max</option>
+          <option>glm-4-plus</option><option>glm-4-flash</option>
+        </select>
+        <div class="desc">选智谱 GLM 时需在下方填智谱的 Key</div>
+      </div>
+      <div class="field">
+        <label>纪要模型 Key <span class="opt">可选,留空复用百炼 Key</span></label>
+        <input type="password" id="minKey" placeholder="同百炼 Key 则留空">
+      </div>
+      <div class="savebar">
+        <button class="btn btn-blue" id="btnSave">保存设置</button>
+        <span class="okmsg" id="saveOk">已保存 &#10003;</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2><span class="ico">&#128228;</span>纪要分发</h2>
+      <div class="field">
+        <label>云端同步</label>
+        <select id="cloudProvider">
+          <option value="">不启用</option>
+          <option value="dingtalk">钉钉群机器人</option>
+          <option value="feishu">飞书群机器人</option>
+          <option value="custom">自定义 Webhook</option>
+        </select>
+        <div class="desc" id="cloudDesc" style="display:none"></div>
+      </div>
+      <div class="field" id="webhookField" style="display:none">
+        <label>Webhook 地址</label>
+        <input type="text" id="cloudWebhook" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/…">
+      </div>
+      <div class="field" id="secretField" style="display:none">
+        <label>加签密钥 <span class="opt">可选,机器人开了签名校验才需要</span></label>
+        <input type="password" id="cloudSecret" placeholder="SEC 开头(钉钉) / 飞书签名密钥">
+      </div>
+      <div class="savebar" id="cloudBar" style="display:none">
+        <button class="btn btn-sm" id="btnCloudTest">测试连接</button>
+        <span class="okmsg" id="cloudTestOk"></span>
+      </div>
+      <div class="field" style="margin-top:14px">
+        <label>发到手机</label>
+        <select id="phoneSel"></select>
+        <div class="desc">手机 USB 连电脑并开调试;纪会纪要会推送到 手机Download/腕录纪要/</div>
+      </div>
+      <div class="field">
+        <label class="switch"><input type="checkbox" id="phoneShare"><span class="track"></span>
+          <span style="font-size:12.5px;color:var(--sub)">推送后在手机上弹出分享面板(可转发微信等)</span></label>
+      </div>
+      <div class="savebar">
+        <button class="btn btn-blue" id="btnSave2">保存设置</button>
+        <span class="okmsg" id="saveOk2">已保存 &#10003;</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2><span class="ico">&#128218;</span>三步用起来</h2>
+      <ol class="steps">
+        <li><b>录音</b> — 点「开始录音」,结束时点「结束录音」(手表端也可直接按表盘按钮)</li>
+        <li><b>取回</b> — 「录音文件」里勾选 &#8594; 拉取到本地(不产生费用)</li>
+        <li><b>解析</b> — 勾选本地录音 &#8594; 「上传百炼解析」,完成后在下方结果区查看</li>
+      </ol>
+      <div class="hint">录音与上传完全由你决定;未勾选上传的录音永远只留在本地。</div>
+    </div>
+  </div>
+</div></div>
+
+<div id="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+let S = null;              // 最近一次 /api/state
+let tab = 'watch';         // watch | local
+let sel = new Set();       // 当前 tab 勾选
+let resSel = null, resTab = 'transcript';
+let pendingUpload = null;
+
+const fmtSize = n => n >= 1048576 ? (n/1048576).toFixed(1)+' MB' : (n/1024).toFixed(0)+' KB';
+
+function toast(msg, err){
+  const t = $('toast');
+  t.textContent = msg; t.className = 'show' + (err ? ' err' : '');
+  clearTimeout(t._h); t._h = setTimeout(()=>t.className='', 2600);
+}
+
+async function api(path, body){
+  const r = await fetch(path, body ? {method:'POST',headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(body)} : undefined);
+  return r.json();
+}
+
+/* ---------------- 状态轮询与渲染 ---------------- */
+async function poll(){
+  try{ S = await api('/api/state'); render(); }catch(e){ /* server restarting */ }
+  setTimeout(poll, 2500);
+}
+
+function render(){
+  const w = S.watch, c = S.config;
+  // 连接状态
+  $('connDot').className = 'dot' + (w.recording ? ' rec' : w.connected ? ' on' : '');
+  $('connTxt').textContent = w.recording ? '正在录音…'
+    : w.connected ? `手表已连接 (${w.serial})`
+    : w.app_installed === false && w.connected ? '已连接,未装腕录' : '未连接手表';
+
+  // 设备下拉
+  const ds = $('devSel');
+  if (document.activeElement !== ds){
+    const cur = c.watch_serial || (w.devices[0] || '');
+    ds.innerHTML = w.devices.length
+      ? w.devices.map(d=>`<option ${d===cur?'selected':''}>${d}</option>`).join('')
+      : '<option value="">未发现设备</option>';
+  }
+  if (document.activeElement !== $('watchAddr')) $('watchAddr').value = c.watch_addr || '';
+
+  // 录音按钮状态
+  $('btnStart').disabled = !w.connected || !w.app_installed || w.recording;
+  $('btnStop').disabled = !w.recording;
+  $('btnStop').classList.toggle('live', w.recording);
+
+  // 文件列表
+  const list = tab === 'watch' ? w.files : S.inbox;
+  $('tabWatch').classList.toggle('on', tab==='watch');
+  $('tabLocal').classList.toggle('on', tab==='local');
+  $('fileCount').textContent = list.length ? `${list.length} 个 · ${fmtSize(list.reduce((a,b)=>a+b.size,0))}` : '';
+  $('fileList').innerHTML = list.length ? list.map(f=>`
+    <label class="fitem"><input type="checkbox" data-n="${f.name}" ${sel.has(f.name)?'checked':''}>
+      <span class="fico">${tab==='watch'?'&#8986;':'&#128190;'}</span>
+      <span class="fname" title="${f.name}">${f.name}</span>
+      <span class="fsize">${fmtSize(f.size)}</span></label>`).join('')
+    : `<div class="empty">${tab==='watch' ? (w.connected?'手表上还没有录音':'先连接手表') : '本地还没有录音,先从手表拉取'}</div>`;
+  $('btnPull').disabled = tab!=='watch';
+  $('btnUpload').disabled = !(tab==='local' && [...sel].some(n=>S.inbox.find(f=>f.name===n)));
+
+  // 任务
+  const jobs = S.jobs;
+  $('jobs').innerHTML = jobs.length ? jobs.map(j=>`
+    <div class="job"><span class="chip ${j.status}">${({queued:'排队',running:'进行中',done:'完成',error:'失败'})[j.status]||j.status}</span>
+      <span class="jname" title="${j.name}">${j.name}</span>
+      <span class="jlog">${(j.log[j.log.length-1]||'').replace(/</g,'&lt;')}</span></div>`).join('')
+    : '<div class="empty">暂无任务 — 勾选录音后点「上传百炼解析」</div>';
+
+  // 结果列表
+  const rl = $('resList');
+  rl.innerHTML = S.results.length ? S.results.map(r=>`
+    <div class="ritem ${r.name===resSel?'on':''}" data-n="${r.name}">${r.name}
+      <small>${r.has_minutes ? '转写 + 纪要' : '仅转写'}</small></div>`).join('')
+    : '<div class="empty">还没有解析结果</div>';
+  rl.querySelectorAll('.ritem').forEach(el=>el.onclick=()=>{resSel=el.dataset.n; loadResult();});
+  if (!resSel && S.results.length){ resSel = S.results[0].name; loadResult(); }
+}
+
+/* ---------------- 结果查看 ---------------- */
+function md2html(md){
+  const esc = s=>s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const inline = s=>esc(s).replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/`(.+?)`/g,'<code>$1</code>');
+  const out=[]; let inList=false, lines=md.split('\n');
+  const closeList=()=>{ if(inList){out.push('</ul>');inList=false;} };
+  for(let i=0;i<lines.length;i++){
+    const l=lines[i];
+    if(/^\s*\|.*\|\s*$/.test(l) && lines[i+1] && /^\s*\|[\s:|-]+\|\s*$/.test(lines[i+1])){
+      closeList();
+      const head=l.split('|').slice(1,-1).map(x=>x.trim());
+      let rows=[];
+      i+=2;
+      while(i<lines.length && /^\s*\|.*\|\s*$/.test(lines[i])){ rows.push(lines[i].split('|').slice(1,-1).map(x=>x.trim())); i++; }
+      i--;
+      out.push('<table><tr>'+head.map(h=>`<th>${inline(h)}</th>`).join('')+'</tr>'+
+        rows.map(r=>'<tr>'+r.map(x=>`<td>${inline(x)}</td>`).join('')+'</tr>').join('')+'</table>');
+      continue;
+    }
+    const h=l.match(/^(#{1,4})\s+(.*)/);
+    if(h){ closeList(); out.push(`<h${h[1].length}>${inline(h[2])}</h${h[1].length}>`); continue; }
+    if(/^\s*(-{3,}|\*{3,})\s*$/.test(l)){ closeList(); out.push('<hr>'); continue; }
+    if(/^\s*[-*]\s+/.test(l)){
+      if(!inList){out.push('<ul>');inList=true;}
+      out.push(`<li>${inline(l.replace(/^\s*[-*]\s+/,''))}</li>`); continue;
+    }
+    if(/^\s*\d+\.\s+/.test(l)){
+      if(!inList){out.push('<ul>');inList=true;}
+      out.push(`<li>${inline(l.replace(/^\s*\d+\.\s+/,''))}</li>`); continue;
+    }
+    if(l.trim()===''){ closeList(); continue; }
+    closeList(); out.push(`<p>${inline(l)}</p>`);
+  }
+  closeList(); return out.join('\n');
+}
+
+async function loadResult(){
+  render();
+  if(!resSel) return;
+  const d = await api('/api/result/'+encodeURIComponent(resSel));
+  const v = $('resView');
+  $('rtabT').classList.toggle('on',resTab==='transcript');
+  $('rtabM').classList.toggle('on',resTab==='minutes');
+  $('rtabR').classList.toggle('on',resTab==='raw');
+  if(resTab==='transcript') v.innerHTML = d.transcript ? `<div class="md">${md2html(d.transcript)}</div>` : '<div class="empty">无转写</div>';
+  else if(resTab==='minutes') v.innerHTML = d.minutes ? `<div class="md">${md2html(d.minutes)}</div>` : '<div class="empty">未生成纪要(未开启或失败)</div>';
+  else v.innerHTML = d.raw ? `<pre>${d.raw.replace(/</g,'&lt;').slice(0,20000)}</pre>` : '<div class="empty">无</div>';
+}
+$('rtabT').onclick=()=>{resTab='transcript';loadResult()};
+$('rtabM').onclick=()=>{resTab='minutes';loadResult()};
+$('rtabR').onclick=()=>{resTab='raw';loadResult()};
+
+/* ---------------- 交互 ---------------- */
+$('tabWatch').onclick=()=>{tab='watch';sel.clear();hideConfirm();render()};
+$('tabLocal').onclick =()=>{tab='local';sel.clear();hideConfirm();render()};
+$('fileList').addEventListener('change',e=>{
+  if(e.target.matches('input[type=checkbox]')){
+    e.target.checked ? sel.add(e.target.dataset.n) : sel.delete(e.target.dataset.n);
+    hideConfirm(); render();
+  }
+});
+$('btnRefresh').onclick=async()=>{ await poll(); toast('已刷新'); };
+
+$('btnConnect').onclick=async()=>{
+  const addr=$('watchAddr').value.trim();
+  if(!addr) return toast('请填手表地址,如 192.168.1.8:5555',1);
+  toast('连接中…');
+  const r=await api('/api/adb_connect',{addr});
+  toast(r.msg||(r.ok?'已连接':'连接失败'),!r.ok);
+  if(r.ok) await saveCfg({watch_addr:addr});
+  poll();
+};
+
+$('devSel').onchange=()=>saveCfg({watch_serial:$('devSel').value});
+
+$('btnStart').onclick=async()=>{
+  const r=await api('/api/rec',{action:'start'});
+  toast(r.ok?(r.recording?'手表开始录音 ✔':'指令已发,请确认手表'):'失败: '+(r.msg||''),r.ok);
+  poll();
+};
+$('btnStop').onclick=async()=>{
+  const r=await api('/api/rec',{action:'stop'});
+  toast(r.ok?(!r.recording?'已停止,录音已保存 ✔':'指令已发'):'失败: '+(r.msg||''),r.ok);
+  setTimeout(poll,800);
+};
+
+$('btnPull').onclick=async()=>{
+  const names=[...sel];
+  if(!names.length) return toast('请先勾选手表上的录音',1);
+  toast(`拉取 ${names.length} 个…`);
+  const r=await api('/api/pull',{files:names});
+  toast(r.ok?`已拉取 ${r.pulled.length} 个到本地 ✔`:'拉取失败',!r.ok);
+  if(r.ok){tab='local';sel.clear();render();}
+};
+
+$('btnUpload').onclick=()=>{
+  const names=[...sel].filter(n=>S.inbox.find(f=>f.name===n));
+  if(!names.length) return toast('在「本地待解析」里勾选要上传的录音',1);
+  pendingUpload=names;
+  const bar=$('confirmBar');
+  bar.innerHTML=`将上传 <b>${names.length}</b> 个录音到百炼解析(转写${S.config.minutes_enabled?' + 纪要':''},按量计费)
+    <button class="btn-blue btn-sm" id="doUpload">确认上传</button>
+    <button class="btn btn-sm" id="cancelUpload">取消</button>`;
+  bar.classList.add('show');
+  $('doUpload').onclick=doUpload;
+  $('cancelUpload').onclick=hideConfirm;
+};
+function hideConfirm(){pendingUpload=null;$('confirmBar').classList.remove('show')}
+async function doUpload(){
+  const r=await api('/api/submit',{files:pendingUpload});
+  hideConfirm();
+  if(r.ok){toast(`已加入队列 ${r.added.length} 个 ✔`); sel.clear(); render();}
+  else toast(r.msg||'提交失败',1);
+}
+
+/* ---------------- 设置 ---------------- */
+function fillForm(c){
+  $('apiKey').value=''; $('apiKey').placeholder=c.api_key_set?`已配置 ${c.api_key_mask} — 留空保持不变`:'必填;bailian.console.aliyun.com 获取';
+  $('apiKeyDesc').textContent=c.api_key_set?'':'新用户有免费额度';
+  $('asrModel').value=c.asr_model; if(!$('asrModel').value) $('asrModel').value='paraformer-v2';
+  $('langHints').value=c.language_hints;
+  $('diar').checked=c.diarization;
+  $('minEn').checked=c.minutes_enabled;
+  $('minBase').value=c.minutes_base; if(!$('minBase').value) $('minBase').value='https://dashscope.aliyuncs.com/compatible-mode/v1';
+  $('minModel').value=c.minutes_model; if(!$('minModel').value) $('minModel').value='qwen-plus';
+  $('minKey').value='';
+}
+let formFilled=false;
+const _render=render;
+render=function(){
+  _render();
+  if(!formFilled && S){fillForm(S.config);renderCloud(S.config);formFilled=true;}
+  // 手机下拉(排除手表)
+  const ps=$('phoneSel');
+  if(document.activeElement!==ps){
+    const cands=(S.devices||[]).filter(d=>d!==S.config.watch_serial);
+    const cur=S.config.phone_serial||cands[0]||'';
+    ps.innerHTML=cands.length?cands.map(d=>`<option ${d===cur?'selected':''}>${d}</option>`).join('')
+      :'<option value="">未检测到手机</option>';
+  }
+};
+
+$('btnEye').onclick=()=>{const k=$('apiKey');k.type=k.type==='password'?'text':'password'};
+$('minBase').onchange=()=>{
+  const glm=$('minBase').value.includes('bigmodel');
+  $('minModel').value=glm?'glm-4-plus':'qwen-plus';
+};
+$('btnSave').onclick=()=>saveCfg();
+
+async function saveCfg(extra){
+  const body={
+    asr_model:$('asrModel').value,
+    language_hints:$('langHints').value||'zh,en',
+    diarization:$('diar').checked,
+    minutes_enabled:$('minEn').checked,
+    minutes_base:$('minBase').value,
+    minutes_model:$('minModel').value,
+    watch_serial: extra?.watch_serial ?? ($('devSel').value||''),
+    watch_addr: extra?.watch_addr ?? $('watchAddr').value.trim(),
+    cloud_provider: $('cloudProvider').value,
+    cloud_webhook: $('cloudWebhook').value.trim(),
+    phone_serial: $('phoneSel').value||'',
+    phone_share: $('phoneShare').checked,
+  };
+  const k=$('apiKey').value.trim(); if(k) body.api_key=k;
+  const mk=$('minKey').value.trim(); if(mk) body.minutes_key=mk;
+  const cs=$('cloudSecret').value.trim(); if(cs) body.cloud_secret=cs;
+  const r=await api('/api/config',body);
+  if(r.ok){
+    $('saveOk').classList.add('show'); $('saveOk2').classList.add('show');
+    setTimeout(()=>{$('saveOk').classList.remove('show');$('saveOk2').classList.remove('show')},1500);
+    S.config=r.config;
+  }
+  toast(r.ok?'设置已保存 ✔':'保存失败',!r.ok);
+}
+
+/* ---------------- 纪要分发 ---------------- */
+const CLOUD_DESC={
+  dingtalk:'钉钉群 → 设置 → 机器人 → 添加"自定义"机器人;安全设置建议选"加签",把 SEC 密钥填到下方',
+  feishu:'飞书群 → 设置 → 群机器人 → Custom Bot;若开启"签名校验",密钥填到下方',
+  custom:'向填写的 URL POST {"title","content","source"} JSON;可接你自己的服务/n8n/企业内部接口',
+};
+function renderCloud(c){
+  $('cloudProvider').value=c.cloud_provider||'';
+  $('cloudWebhook').value=c.cloud_webhook||'';
+  $('cloudWebhook').placeholder='https://oapi.dingtalk.com/robot/send?access_token=…';
+  $('cloudSecret').value=''; $('cloudSecret').placeholder=c.cloud_secret_set?'已配置 — 留空保持不变':'选填';
+  const p=$('cloudProvider').value;
+  $('webhookField').style.display=p?'':'none';
+  $('secretField').style.display=(p==='dingtalk'||p==='feishu')?'':'none';
+  $('cloudBar').style.display=p?'':'none';
+  $('cloudDesc').style.display=p?'':'none';
+  $('cloudDesc').textContent=CLOUD_DESC[p]||'';
+  $('phoneShare').checked=c.phone_share;
+}
+$('cloudProvider').onchange=()=>renderCloud({...S.config,cloud_provider:$('cloudProvider').value});
+$('btnSave2').onclick=()=>saveCfg();
+$('btnCloudTest').onclick=async()=>{
+  await saveCfg();
+  toast('发送测试消息…');
+  const r=await api('/api/cloud_test',{});
+  const ok=$('cloudTestOk');
+  ok.textContent=r.ok?'测试通过 ✔':'失败'; ok.style.color=r.ok?'var(--green)':'var(--red)';
+  ok.classList.add('show'); setTimeout(()=>ok.classList.remove('show'),2500);
+  toast(r.ok?'云端测试消息已发出 ✔':'失败: '+(r.msg||''),!r.ok);
+};
+function needResult(){ if(!resSel){toast('先在结果列表选择一条',1);return false;} return true; }
+$('btnToPhone').onclick=async()=>{
+  if(!needResult())return;
+  toast('发送到手机…');
+  const r=await api('/api/send_phone',{name:resSel});
+  toast(r.ok?r.msg:'失败: '+(r.msg||''),!r.ok);
+};
+$('btnToCloud').onclick=async()=>{
+  if(!needResult())return;
+  const p=S.config.cloud_provider;
+  if(!p) return toast('先在「纪要分发」里配置云端同步',1);
+  toast('同步到云端…');
+  const r=await api('/api/cloud_send',{name:resSel});
+  toast(r.ok?'已同步到云端 ✔':'失败: '+(r.msg||''),!r.ok);
+};
+$('btnDlMd').onclick=()=>{
+  if(!needResult())return;
+  window.open('/api/download/'+encodeURIComponent(resSel));
+};
+
+poll();
+</script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+{
+  "file_url": "oss://demo/REC_20261022_150000.m4a",
+  "properties": {"audio_format": "m4a", "channels": 1, "original_duration_in_milliseconds": 125000},
+  "transcripts": [{"channel_id": 0, "text": "大家好,我们开始周会。先说一下上周的进展。客户端这边已经发版了。",
+    "sentences": [
+      {"text": "大家好,我们开始周会。", "begin_time": 0, "end_time": 3200, "sentence_id": 0, "speaker_id": 0},
+      {"text": "先说一下上周的进展。", "begin_time": 3400, "end_time": 6100, "sentence_id": 1, "speaker_id": 0},
+      {"text": "客户端这边已经发版了。", "begin_time": 6500, "end_time": 9200, "sentence_id": 2, "speaker_id": 1}
+    ]}]
+}
