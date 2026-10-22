@@ -299,6 +299,7 @@ class Handler(BaseHTTPRequestHandler):
                 "config": cfg_public(cfg),
                 "phone": {"serial": phone_serial(cfg), "connected": bool(phone_serial(cfg))},
                 "devices": devs,
+                "lan_addr": f"{lan_ip()}:{PORT}",
             })
             return
         if path.startswith("/api/download/"):
@@ -448,6 +449,28 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": bool(added), "added": added})
             return
 
+        if path == "/api/watch_push":
+            """手表手动上传录音:只落盘 inbox,绝不自动解析"""
+            try:
+                ctype = self.headers.get("Content-Type", "")
+                length = int(self.headers.get("Content-Length", "0"))
+                body = self.rfile.read(length) if length > 0 else b""
+                parts = parse_multipart(body, ctype)
+                fn, data = parts.get("file", (None, b""))
+                if not fn or not data:
+                    self._json({"ok": False, "msg": "缺少文件"}, 400)
+                    return
+                fn = "".join(c for c in fn if c not in "/\\:") or "watch_upload.m4a"
+                if not fn.endswith(".m4a"):
+                    fn += ".m4a"
+                INBOX.mkdir(exist_ok=True)
+                (INBOX / fn).write_bytes(data)
+                print(f"[手表上传] {fn} {len(data)} 字节 → inbox", flush=True)
+                self._json({"ok": True, "name": fn, "size": len(data)})
+            except Exception as e:
+                self._json({"ok": False, "msg": str(e)}, 500)
+            return
+
         # ---------- 纪要分发 ----------
         if path == "/api/send_phone":
             body = self._body()
@@ -470,11 +493,47 @@ class Handler(BaseHTTPRequestHandler):
         self._json({"error": "not found"}, 404)
 
 
+def lan_ip() -> str:
+    """本机局域网 IP(开个 UDP socket 不发包即可拿到路由表出口)"""
+    try:
+        import socket as _s
+        s = _s.socket(_s.AF_INET, _s.SOCK_DGRAM)
+        s.connect(("223.5.5.5", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "127.0.0.1"
+
+
+def parse_multipart(body: bytes, ctype: str):
+    """极简 multipart/form-data 解析(单文件场景)"""
+    import re as _re
+    if "boundary=" not in ctype:
+        return {}
+    b = ctype.split("boundary=", 1)[1].strip().strip('"')
+    boundary = ("--" + b).encode()
+    out = {}
+    for part in body.split(boundary):
+        part = part.strip(b"\r\n")
+        if not part or part == b"--":
+            continue
+        header, _, data = part.partition(b"\r\n\r\n")
+        hs = header.decode("utf-8", "replace")
+        nm = _re.search(r'name="([^"]+)"', hs)
+        fn = _re.search(r'filename="([^"]*)"', hs)
+        if not nm:
+            continue
+        out[nm.group(1)] = (fn.group(1) if fn else None, data.rstrip(b"\r\n"))
+    return out
+
+
 def main():
     INBOX.mkdir(exist_ok=True)
     OUT.mkdir(exist_ok=True)
-    httpd = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
-    print(f"腕录控制面板 → http://127.0.0.1:{PORT}  (Ctrl+C 退出)")
+    httpd = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
+    ip = lan_ip()
+    print(f"腕录控制面板 → http://127.0.0.1:{PORT}  (局域网 {ip}:{PORT}, 手表上传用)  Ctrl+C 退出")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

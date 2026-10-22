@@ -22,3 +22,5 @@ watchrec_app/local.properties
 Thumbs.db
 .DS_Store
 panel.log
+dchk.sh
+ui_dump.xml

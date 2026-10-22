@@ -332,7 +332,8 @@ select:focus,input:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(59,1
         <li><b>取回</b> — 「录音文件」里勾选 &#8594; 拉取到本地(不产生费用)</li>
         <li><b>解析</b> — 勾选本地录音 &#8594; 「上传百炼解析」,完成后在下方结果区查看</li>
       </ol>
-      <div class="hint">录音与上传完全由你决定;未勾选上传的录音永远只留在本地。</div>
+      <div class="hint">录音与上传完全由你决定;未勾选上传的录音永远只留在本地。<br>
+        📡 手表直传:在手表「设置」页填入本机地址 <b id="lanAddr">…</b>,即可在手表上手动把录音上传到此处(仅传输,不解析)。</div>
     </div>
   </div>
 </div></div>
@@ -591,6 +592,7 @@ const _render=render;
 render=function(){
   _render();
   if(!formFilled && S){fillForm(S.config);renderCloud(S.config);formFilled=true;}
+  const la=$('lanAddr'); if(la && S.lan_addr) la.textContent=S.lan_addr;
   // 手机下拉(排除手表)
   const ps=$('phoneSel');
   if(document.activeElement!==ps){
