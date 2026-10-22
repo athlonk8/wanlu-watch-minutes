@@ -30,21 +30,37 @@ object RecorderState {
     val error = MutableStateFlow<String?>(null)
     val filesSummary = MutableStateFlow("")
     val lastFile = MutableStateFlow<String?>(null)
+    val files = MutableStateFlow<List<RecFile>>(emptyList())
 
     fun refreshFiles(context: Context) {
         val dir = context.getExternalFilesDir(null) ?: return
-        val files = dir.listFiles { f -> f.isFile && f.extension == "m4a" }
+        val list = dir.listFiles { f -> f.isFile && f.extension == "m4a" }
             ?.sortedByDescending { it.name } ?: emptyList()
-        val total = files.sumOf { it.length() }
+        files.value = list.map { RecFile(it.name, it.length(), it.lastModified()) }
+        val total = list.sumOf { it.length() }
         filesSummary.value = when {
-            files.isEmpty() -> "暂无录音"
-            else -> "已存 ${files.size} 段 · ${mb(total)}"
+            list.isEmpty() -> "暂无录音"
+            else -> "已存 ${list.size} 段 · ${mb(total)}"
         }
-        lastFile.value = files.firstOrNull()?.let { "${it.name}  ${mb(it.length())}" }
+        lastFile.value = list.firstOrNull()?.let { "${it.name}  ${mb(it.length())}" }
+    }
+
+    /** 删除一条录音;录音进行中或非法名称一律拒绝 */
+    fun deleteFile(context: Context, name: String): Boolean {
+        if (isRecording.value) return false
+        if (name.contains('/') || name.contains('\\') || name.contains("..")) return false
+        val dir = context.getExternalFilesDir(null) ?: return false
+        val f = File(dir, name)
+        if (!f.isFile || f.extension != "m4a") return false
+        val ok = f.delete()
+        refreshFiles(context)
+        return ok
     }
 
     private fun mb(bytes: Long) = "%.1f MB".format(bytes / 1048576.0)
 }
+
+data class RecFile(val name: String, val size: Long, val modified: Long)
 
 class RecorderService : Service() {
 

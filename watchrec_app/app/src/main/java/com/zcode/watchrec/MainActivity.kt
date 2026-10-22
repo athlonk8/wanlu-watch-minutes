@@ -12,12 +12,23 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -41,10 +52,15 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.delay
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -55,15 +71,16 @@ class MainActivity : ComponentActivity() {
 
 // 配色(参考扁平分段圆环设计)
 private val BG = Color(0xFF0D0D0D)
-private val MINT = Color(0xFF5FD9A4)          // 开始/主色
 private val MINT_DEEP = Color(0xFF4EC99B)
 private val MINT_LIGHT = Color(0xFF7FE0B8)
-private val CORAL = Color(0xFFF26B6B)         // 停止
-private val TRACK_OFF = Color(0xFF26262B)     // 未激活弧
+private val MINT = Color(0xFF5FD9A4)
+private val CORAL = Color(0xFFF26B6B)
+private val TRACK_OFF = Color(0xFF26262B)
+private val CARD = Color(0xFF1A1A1F)
 private val TXT_MAIN = Color(0xFFFFFFFF)
 private val TXT_SUB = Color(0xFF9E9E9E)
 private val TXT_DIM = Color(0xFF6E6E73)
-private val LABEL_ON = Color(0xFF111111)      // 弧内标签(亮弧用黑字)
+private val LABEL_ON = Color(0xFF111111)
 
 private fun hasMic(ctx: android.content.Context) =
     ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) ==
@@ -71,6 +88,21 @@ private fun hasMic(ctx: android.content.Context) =
 
 @Composable
 fun App() {
+    Surface(modifier = Modifier.fillMaxSize(), color = BG) {
+        val pager = rememberPagerState { 2 }
+        HorizontalPager(state = pager, modifier = Modifier.fillMaxSize()) { page ->
+            when (page) {
+                0 -> RecordPage()
+                else -> FilesPage()
+            }
+        }
+    }
+}
+
+/* ============================== 第 1 页: 录音 ============================== */
+
+@Composable
+fun RecordPage() {
     val ctx = LocalContext.current
     var granted by remember { mutableStateOf(hasMic(ctx)) }
 
@@ -93,7 +125,6 @@ fun App() {
     val startedAt by RecorderState.startedAt.collectAsState()
     val err by RecorderState.error.collectAsState()
     val filesSummary by RecorderState.filesSummary.collectAsState()
-    val lastFile by RecorderState.lastFile.collectAsState()
 
     var tick by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
     LaunchedEffect(recording) {
@@ -140,95 +171,221 @@ fun App() {
         }
     }
 
-    Surface(modifier = Modifier.fillMaxSize(), color = BG) {
-        Box(modifier = Modifier.fillMaxSize()) {
+    Box(modifier = Modifier.fillMaxSize()) {
 
-            // ---- 圆环按钮层(上半弧=开始,下半弧=结束) ----
-            Canvas(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .pointerInput(recording) {
-                        detectTapGestures { off ->
-                            val c = Offset(size.width / 2f, size.height / 2f)
-                            val d = off - c
-                            val dist = d.getDistance()
-                            val inner = minOf(size.width, size.height) * 0.26f
-                            if (dist > inner) {
-                                if (d.y < 0) toggleStart() else toggleStop()
-                            }
+        // 圆环按钮层(上半弧=开始,下半弧=结束)
+        Canvas(
+            modifier = Modifier
+                .fillMaxSize()
+                .pointerInput(recording) {
+                    detectTapGestures { off ->
+                        val c = Offset(size.width / 2f, size.height / 2f)
+                        val d = off - c
+                        val dist = d.getDistance()
+                        val inner = minOf(size.width, size.height) * 0.26f
+                        if (dist > inner) {
+                            if (d.y < 0) toggleStart() else toggleStop()
                         }
                     }
-            ) {
-                drawRing(recording = recording, minuteP = if (recording) minuteP else 0f)
-            }
-
-            // ---- 左上角状态(呼应参考图 1/10 的小字) ----
-            Text(
-                text = if (recording) "● REC" else "腕录",
-                color = if (recording) (if (blink) CORAL else CORAL.copy(alpha = 0.35f)) else TXT_DIM,
-                fontSize = 11.sp,
-                fontFamily = FontFamily.Monospace,
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(start = 43.dp, top = 44.dp),
-            )
-
-            // ---- 中央文字堆叠 ----
-            Column(
-                modifier = Modifier.align(Alignment.Center),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center,
-            ) {
-                Text(
-                    timeText,
-                    fontSize = 24.sp,
-                    fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.Bold,
-                    color = if (recording) TXT_MAIN else TXT_MAIN.copy(alpha = 0.55f),
-                )
-                Text(
-                    text = when {
-                        err != null -> err!!.take(10)
-                        recording -> "正在录音"
-                        else -> "点击上方圆环开始"
-                    },
-                    color = if (err != null) CORAL else TXT_SUB,
-                    fontSize = 11.sp,
-                    modifier = Modifier.padding(top = 3.dp),
-                )
-                if (!recording && filesSummary.isNotEmpty()) {
-                    Text(
-                        filesSummary,
-                        color = MINT,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Medium,
-                        modifier = Modifier.padding(top = 4.dp),
-                    )
                 }
-            }
+        ) {
+            drawRing(recording = recording, minuteP = if (recording) minuteP else 0f)
+        }
 
-            // ---- 底部:最近文件(仅待机) ----
-            if (!recording && lastFile != null) {
+        // 左上角状态
+        Text(
+            text = if (recording) "● REC" else "腕录",
+            color = if (recording) (if (blink) CORAL else CORAL.copy(alpha = 0.35f)) else TXT_DIM,
+            fontSize = 11.sp,
+            fontFamily = FontFamily.Monospace,
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(start = 43.dp, top = 44.dp),
+        )
+
+        // 中央文字堆叠
+        Column(
+            modifier = Modifier.align(Alignment.Center),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Text(
+                timeText,
+                fontSize = 24.sp,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Bold,
+                color = if (recording) TXT_MAIN else TXT_MAIN.copy(alpha = 0.55f),
+            )
+            Text(
+                text = when {
+                    err != null -> err!!.take(10)
+                    recording -> "正在录音"
+                    else -> "点击上方圆环开始"
+                },
+                color = if (err != null) CORAL else TXT_SUB,
+                fontSize = 11.sp,
+                modifier = Modifier.padding(top = 3.dp),
+            )
+            if (!recording && filesSummary.isNotEmpty()) {
                 Text(
-                    lastFile!!,
-                    color = TXT_DIM,
-                    fontSize = 9.sp,
-                    maxLines = 1,
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(bottom = 34.dp, start = 40.dp, end = 40.dp),
+                    filesSummary,
+                    color = MINT,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.padding(top = 4.dp),
                 )
             }
         }
+
+        // 底部: 左滑提示
+        Text(
+            text = "‹ 左滑 管理录音",
+            color = TXT_DIM,
+            fontSize = 9.sp,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 30.dp),
+        )
     }
 }
+
+/* ============================== 第 2 页: 录音列表 ============================== */
+
+@Composable
+fun FilesPage() {
+    val ctx = LocalContext.current
+    LaunchedEffect(Unit) { RecorderState.refreshFiles(ctx) }
+
+    val files by RecorderState.files.collectAsState()
+    val recording by RecorderState.isRecording.collectAsState()
+    val summary by RecorderState.filesSummary.collectAsState()
+    var confirmDel by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(confirmDel) {
+        if (confirmDel != null) {
+            delay(3000)
+            confirmDel = null
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(start = 30.dp, end = 30.dp, top = 40.dp, bottom = 26.dp),
+    ) {
+        Row(verticalAlignment = Alignment.Bottom) {
+            Text("录音列表", color = TXT_MAIN, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.weight(1f))
+            Text(
+                if (files.isEmpty()) "空" else summary,
+                color = MINT, fontSize = 10.sp,
+            )
+        }
+        if (recording) {
+            Text(
+                "录音进行中 · 停止后可删除",
+                color = CORAL, fontSize = 9.5.sp,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
+
+        if (files.isEmpty()) {
+            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                Text(
+                    "暂无录音\n回第一页点「开始」",
+                    color = TXT_DIM, fontSize = 11.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.align(Alignment.Center),
+                )
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.weight(1f).padding(top = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(7.dp),
+            ) {
+                items(files, key = { it.name }) { f ->
+                    val confirming = confirmDel == f.name
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(
+                                if (confirming) Color(0x2EF26B6B) else CARD,
+                                RoundedCornerShape(10.dp),
+                            )
+                            .padding(start = 10.dp, end = 6.dp, top = 7.dp, bottom = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                prettyTime(f), color = TXT_MAIN,
+                                fontSize = 12.sp, fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Medium,
+                            )
+                            Text(
+                                "${fmtSize(f.size)} · 约 ${fmtDur(f.size)}",
+                                color = TXT_SUB, fontSize = 9.sp,
+                                modifier = Modifier.padding(top = 1.dp),
+                            )
+                            Text(
+                                f.name,
+                                color = TXT_DIM, fontSize = 8.sp,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        Text(
+                            if (confirming) "确认删" else "✕",
+                            color = if (confirming) CORAL else TXT_SUB,
+                            fontSize = if (confirming) 10.sp else 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier
+                                .clickable {
+                                    if (confirming) {
+                                        if (RecorderState.deleteFile(ctx, f.name)) confirmDel = null
+                                    } else {
+                                        confirmDel = f.name
+                                    }
+                                }
+                                .padding(6.dp),
+                        )
+                    }
+                }
+            }
+        }
+
+        Text(
+            "右滑 返回录音 ›",
+            color = TXT_DIM, fontSize = 9.sp,
+            modifier = Modifier.align(Alignment.CenterHorizontally).padding(top = 6.dp),
+        )
+    }
+}
+
+/** REC_20261022_203202.m4a → "10-22 20:32";解析不了就用文件时间 */
+private fun prettyTime(f: RecFile): String {
+    val m = Regex("REC_(\\d{4})(\\d{2})(\\d{2})_(\\d{2})(\\d{2})").find(f.name)
+    if (m != null) {
+        val (y, mo, d, h, mi) = m.destructured
+        return "$mo-$d $h:$mi"
+    }
+    return SimpleDateFormat("MM-dd HH:mm", Locale.CHINA).format(Date(f.modified))
+}
+
+private fun fmtSize(bytes: Long): String = "%.1f MB".format(bytes / 1048576.0)
+
+/** AAC 64kbps ≈ 8000 字节/秒 */
+private fun fmtDur(bytes: Long): String {
+    val s = bytes / 8000
+    return "%d:%02d".format(s / 60, s % 60)
+}
+
+/* ============================== 圆环绘制 ============================== */
 
 /** 扁平分段圆环:粗弧按键(标签嵌弧内) + 内圈细进度弧
  *  注意:Stroke 以路径为中线向两侧延伸,半径一律按"弧带中心线"理解 */
 private fun DrawScope.drawRing(recording: Boolean, minuteP: Float) {
     val m = size.minDimension
     val stroke = m * 0.125f                 // 弧带厚度
-    val pathR = m * 0.4115f                 // 弧带中心线半径(外沿=m/2-0.026m,不裁屏)
+    val pathR = m * 0.4115f                 // 弧带中心线半径
     val cx = size.width / 2f
     val cy = size.height / 2f
     val topLeft = Offset(cx - pathR, cy - pathR)
@@ -253,16 +410,10 @@ private fun DrawScope.drawRing(recording: Boolean, minuteP: Float) {
     )
 
     // 弧内标签(黑字,嵌在弧带中心线上)
-    drawArcLabel(
-        "开始", Offset(cx, cy - pathR),
-        textSize = m * 0.072f, on = !recording,
-    )
-    drawArcLabel(
-        "结束", Offset(cx, cy + pathR),
-        textSize = m * 0.072f, on = recording,
-    )
+    drawArcLabel("开始", Offset(cx, cy - pathR), m * 0.072f, on = !recording)
+    drawArcLabel("结束", Offset(cx, cy + pathR), m * 0.072f, on = recording)
 
-    // 内圈细进度弧(分钟进度,薄荷绿),与主环之间留空隙
+    // 内圈细进度弧(分钟进度)
     if (recording && minuteP > 0.003f) {
         val pStroke = m * 0.0086f
         val pR = pathR - stroke / 2f - m * 0.022f - pStroke / 2f
@@ -276,7 +427,8 @@ private fun DrawScope.drawRing(recording: Boolean, minuteP: Float) {
     }
 }
 
-private fun DrawScope.drawArcLabel(text: String, center: Offset, textSize: Float, on: Boolean) {    val color = if (on) LABEL_ON else Color(0xFF63636A)
+private fun DrawScope.drawArcLabel(text: String, center: Offset, textSize: Float, on: Boolean) {
+    val color = if (on) LABEL_ON else Color(0xFF63636A)
     val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         this.color = android.graphics.Color.argb(
             (color.alpha * 255).toInt(),
