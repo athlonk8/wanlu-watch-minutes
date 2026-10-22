@@ -383,6 +383,10 @@ class Handler(BaseHTTPRequestHandler):
             if not st["app_installed"]:
                 self._json({"ok": False, "msg": "手表上还没安装「腕录」"})
                 return
+            # ColorOS 在息屏状态可能拒绝启动前台服务,先唤醒屏幕再下发指令
+            if action == "start":
+                run_adb(["-s", st["serial"], "shell", "input", "keyevent", "KEYCODE_WAKEUP"])
+                time.sleep(0.5)
             ok, out = run_adb(["-s", st["serial"], "shell", "am", "start",
                                "-n", "com.zcode.watchrec/.RemoteControlActivity",
                                "--es", "action", str(action)])

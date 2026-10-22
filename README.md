@@ -133,7 +133,8 @@ gradlew.bat :app:assembleDebug    # 需 JDK 17+ / Android SDK 35
 - ✅ 模拟器:录音生成有效 m4a、电脑遥控启停、圆环 UI 视觉验收
 - ✅ 一加真机:纪要 adb 推送到 Download(中文文件名正常)
 - ✅ Webhook:本地接收器端到端(钉钉/飞书消息体已按官方格式构造)
-- ⚠️ OPPO Watch X3 真机安装与录音为本项目下一验证项(国行 ColorOS Watch 无官方三方 SDK,依赖 ADB sideload)
+- ✅ OPPO Watch X3 **真机**:底座 USB 连电脑安装成功,真机录音/息屏/圆环 UI(466×466 圆屏无裁切)/面板遥控启停全部实测通过
+  (连接提示:手表 USB 调试需开启并放授权;息屏状态下遥控启动可能被系统拦截,面板已做先唤醒处理)
 
 ## License
 
