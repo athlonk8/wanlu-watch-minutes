@@ -71,7 +71,8 @@ def worker():
             cfg = minutes.load_config()
             if not cfg["api_key"]:
                 raise minutes.MinutesError("未配置百炼 API Key,请先在「百炼设置」里填写")
-            out_dir = minutes.process(Path(job["path"]), cfg, OUT, progress=log)
+            out_dir = minutes.process(Path(job["path"]), cfg, OUT, progress=log,
+                                       title=job.get("title", ""))
             job["status"] = "done"
             job["out"] = out_dir.name
             log("全部完成 ✔")
@@ -415,10 +416,23 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/submit":
-            names = self._body().get("files") or []
+            body = self._body()
+            names = body.get("files") or []
+            params = body.get("params") or {}
             if not names:
                 self._json({"ok": False, "msg": "请先勾选要解析的录音"})
                 return
+            # 常用偏好写回 config.ini(下次默认值跟随本次选择)
+            cfg = minutes.load_config()
+            for k in ("diarization", "language_hints", "asr_model",
+                      "minutes_enabled", "minutes_model"):
+                if k in params and params[k] not in (None, ""):
+                    if k in ("diarization", "minutes_enabled"):
+                        cfg[k] = bool(params[k])
+                    else:
+                        cfg[k] = str(params[k])
+            minutes.save_config(cfg)
+            title = str(params.get("title") or "").strip()
             added = []
             for name in names:
                 p = INBOX / name
@@ -427,7 +441,8 @@ class Handler(BaseHTTPRequestHandler):
                 JOB_SEQ[0] += 1
                 jid = f"j{JOB_SEQ[0]}"
                 JOBS[jid] = {"id": jid, "name": name, "path": str(p),
-                             "status": "queued", "log": [], "out": ""}
+                             "status": "queued", "log": [], "out": "",
+                             "title": title}
                 QUEUE.put(jid)
                 added.append(name)
             self._json({"ok": bool(added), "added": added})

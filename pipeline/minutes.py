@@ -240,12 +240,12 @@ USER_TMPL = """请把下面的会议转写(带时间戳和说话人)整理成 Ma
 ## 风险与待跟进
 
 要求:忠于原文;过滤寒暄和无意义内容;保留数字、日期、金额、人名等关键信息。
-
+{title_line}
 会议转写如下:
 {transcript}"""
 
 
-def make_minutes(transcript_md: str, cfg: dict, progress=print) -> str:
+def make_minutes(transcript_md: str, cfg: dict, progress=print, title: str = "") -> str:
     body_text = "\n".join(l for l in transcript_md.splitlines() if not l.startswith("#"))
     progress(f"生成纪要中({cfg['minutes_model']})…")
     r = requests.post(
@@ -272,7 +272,7 @@ def make_minutes(transcript_md: str, cfg: dict, progress=print) -> str:
 
 # ---------------------------------------------------------------- 主流程
 
-def process(path: Path, cfg: dict, out_dir: Path, progress=print) -> Path:
+def process(path: Path, cfg: dict, out_dir: Path, progress=print, title: str = "") -> Path:
     """处理单个音频,返回输出目录。进度通过 progress(str) 回调。"""
     stem_dir = out_dir / path.stem
     stem_dir.mkdir(parents=True, exist_ok=True)
@@ -287,7 +287,7 @@ def process(path: Path, cfg: dict, out_dir: Path, progress=print) -> Path:
     progress(f"转写已保存 → {stem_dir / '转写.md'}")
 
     if cfg.get("minutes_enabled", True):
-        md = make_minutes(transcript_md, cfg, progress)
+        md = make_minutes(transcript_md, cfg, progress, title=title)
         (stem_dir / "会议纪要.md").write_text(md + "\n", encoding="utf-8")
         progress(f"纪要已生成 → {stem_dir / '会议纪要.md'}")
     return stem_dir

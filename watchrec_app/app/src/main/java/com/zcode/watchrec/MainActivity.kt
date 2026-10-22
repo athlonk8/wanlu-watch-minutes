@@ -3,6 +3,7 @@ package com.zcode.watchrec
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Paint
 import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
@@ -10,21 +11,13 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -41,10 +34,13 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -56,6 +52,18 @@ class MainActivity : ComponentActivity() {
         setContent { App() }
     }
 }
+
+// 配色(参考扁平分段圆环设计)
+private val BG = Color(0xFF0D0D0D)
+private val MINT = Color(0xFF5FD9A4)          // 开始/主色
+private val MINT_DEEP = Color(0xFF4EC99B)
+private val MINT_LIGHT = Color(0xFF7FE0B8)
+private val CORAL = Color(0xFFF26B6B)         // 停止
+private val TRACK_OFF = Color(0xFF26262B)     // 未激活弧
+private val TXT_MAIN = Color(0xFFFFFFFF)
+private val TXT_SUB = Color(0xFF9E9E9E)
+private val TXT_DIM = Color(0xFF6E6E73)
+private val LABEL_ON = Color(0xFF111111)      // 弧内标签(亮弧用黑字)
 
 private fun hasMic(ctx: android.content.Context) =
     ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) ==
@@ -96,6 +104,16 @@ fun App() {
     }
     val secs = if (recording && startedAt > 0) ((tick - startedAt) / 1000L).coerceAtLeast(0L) else 0L
     val timeText = "%d:%02d:%02d".format(secs / 3600, (secs % 3600) / 60, secs % 60)
+    val minuteP = (secs % 60) / 60f
+
+    var blink by remember { mutableStateOf(true) }
+    LaunchedEffect(recording) {
+        while (recording) {
+            blink = !blink
+            delay(600)
+        }
+        blink = true
+    }
 
     LaunchedEffect(recording) {
         if (!recording) {
@@ -104,123 +122,171 @@ fun App() {
         }
     }
 
-    Surface(modifier = Modifier.fillMaxSize(), color = Color.Black) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 14.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-        ) {
-            Text(timeText, fontSize = 26.sp, fontFamily = FontFamily.Monospace, color = Color.White)
-            Spacer(Modifier.height(2.dp))
-            Text(
-                text = when {
-                    err != null -> err!!
-                    recording -> "正在录音"
-                    else -> "就绪"
-                },
-                color = if (err != null) Color(0xFFFF8A80) else Color(0xFF8FA3BF),
-                fontSize = 11.sp,
-            )
-            Spacer(Modifier.height(14.dp))
+    fun toggleStart() {
+        if (!granted) {
+            askPerms()
+            return
+        }
+        if (!recording) {
+            ContextCompat.startForegroundService(ctx, Intent(ctx, RecorderService::class.java))
+        }
+    }
 
-            Row(horizontalArrangement = Arrangement.spacedBy(18.dp)) {
-                RingButton(
-                    glyph = "\u25B6", label = "开始",
-                    active = !recording,
-                    ringColor = Color(0xFF4DA3FF), glyphColor = Color(0xFFBBDDFF),
-                ) {
-                    if (!granted) {
-                        askPerms()
-                        return@RingButton
+    fun toggleStop() {
+        if (recording) {
+            ctx.startService(
+                Intent(ctx, RecorderService::class.java).setAction(RecorderService.ACTION_STOP)
+            )
+        }
+    }
+
+    Surface(modifier = Modifier.fillMaxSize(), color = BG) {
+        Box(modifier = Modifier.fillMaxSize()) {
+
+            // ---- 圆环按钮层(上半弧=开始,下半弧=结束) ----
+            Canvas(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pointerInput(recording) {
+                        detectTapGestures { off ->
+                            val c = Offset(size.width / 2f, size.height / 2f)
+                            val d = off - c
+                            val dist = d.getDistance()
+                            val inner = minOf(size.width, size.height) * 0.26f
+                            if (dist > inner) {
+                                if (d.y < 0) toggleStart() else toggleStop()
+                            }
+                        }
                     }
-                    if (!recording) {
-                        ContextCompat.startForegroundService(ctx, Intent(ctx, RecorderService::class.java))
-                    }
-                }
-                RingButton(
-                    glyph = "\u25A0", label = "结束",
-                    active = recording,
-                    ringColor = Color(0xFFFF5A56), glyphColor = Color(0xFFFFD9D7),
-                    glow = recording,
-                    progress = { (secs % 60) / 60f },
-                ) {
-                    if (recording) {
-                        ctx.startService(
-                            Intent(ctx, RecorderService::class.java).setAction(RecorderService.ACTION_STOP)
-                        )
-                    }
+            ) {
+                drawRing(recording = recording, minuteP = if (recording) minuteP else 0f)
+            }
+
+            // ---- 左上角状态(呼应参考图 1/10 的小字) ----
+            Text(
+                text = if (recording) "● REC" else "腕录",
+                color = if (recording) (if (blink) CORAL else CORAL.copy(alpha = 0.35f)) else TXT_DIM,
+                fontSize = 11.sp,
+                fontFamily = FontFamily.Monospace,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(start = 43.dp, top = 44.dp),
+            )
+
+            // ---- 中央文字堆叠 ----
+            Column(
+                modifier = Modifier.align(Alignment.Center),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+            ) {
+                Text(
+                    timeText,
+                    fontSize = 24.sp,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                    color = if (recording) TXT_MAIN else TXT_MAIN.copy(alpha = 0.55f),
+                )
+                Text(
+                    text = when {
+                        err != null -> err!!.take(10)
+                        recording -> "正在录音"
+                        else -> "点击上方圆环开始"
+                    },
+                    color = if (err != null) CORAL else TXT_SUB,
+                    fontSize = 11.sp,
+                    modifier = Modifier.padding(top = 3.dp),
+                )
+                if (!recording && filesSummary.isNotEmpty()) {
+                    Text(
+                        filesSummary,
+                        color = MINT,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
                 }
             }
 
-            Spacer(Modifier.height(10.dp))
+            // ---- 底部:最近文件(仅待机) ----
             if (!recording && lastFile != null) {
-                Text(lastFile!!, fontSize = 9.sp, color = Color(0xFF6E7B8C), textAlign = TextAlign.Center,
-                    maxLines = 1)
-                Spacer(Modifier.height(2.dp))
-                Text(filesSummary, fontSize = 10.sp, color = Color(0xFF8FA3BF))
+                Text(
+                    lastFile!!,
+                    color = TXT_DIM,
+                    fontSize = 9.sp,
+                    maxLines = 1,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 34.dp, start = 40.dp, end = 40.dp),
+                )
             }
         }
     }
 }
 
-/** 圆环按键:轨道环 + 进度弧 + 呼吸光晕,适配圆屏 */
-@Composable
-fun RingButton(
-    glyph: String,
-    label: String,
-    active: Boolean,
-    ringColor: Color,
-    glyphColor: Color,
-    glow: Boolean = false,
-    progress: () -> Float = { 0f },
-    onClick: () -> Unit,
-) {
-    val pulse = rememberInfiniteTransition(label = "pulse")
-    val glowAlpha by pulse.animateFloat(0.06f, 0.3f, infiniteRepeatable(tween(900)), label = "glow")
+/** 扁平分段圆环:粗弧按键(标签嵌弧内) + 内圈细进度弧
+ *  注意:Stroke 以路径为中线向两侧延伸,半径一律按"弧带中心线"理解 */
+private fun DrawScope.drawRing(recording: Boolean, minuteP: Float) {
+    val m = size.minDimension
+    val stroke = m * 0.125f                 // 弧带厚度
+    val pathR = m * 0.4115f                 // 弧带中心线半径(外沿=m/2-0.026m,不裁屏)
+    val cx = size.width / 2f
+    val cy = size.height / 2f
+    val topLeft = Offset(cx - pathR, cy - pathR)
+    val arcSize = Size(pathR * 2, pathR * 2)
 
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(
-            contentAlignment = Alignment.Center,
-            modifier = Modifier
-                .size(86.dp)
-                .clickable(enabled = active) { onClick() },
-        ) {
-            Canvas(Modifier.size(86.dp)) {
-                val stroke = 5.dp.toPx()
-                val inset = stroke / 2 + 3.dp.toPx()
-                val arcSize = Size(size.width - inset * 2, size.height - inset * 2)
-                val topLeft = Offset(inset, inset)
+    // 上半弧「开始」: 待机=薄荷绿渐变,录音中=暗灰(禁用)
+    drawArc(
+        brush = if (recording) androidx.compose.ui.graphics.SolidColor(TRACK_OFF)
+        else androidx.compose.ui.graphics.Brush.sweepGradient(
+            listOf(MINT_DEEP, MINT_LIGHT, MINT_DEEP)
+        ),
+        startAngle = -90f - 82f, sweepAngle = 164f, useCenter = false,
+        topLeft = topLeft, size = arcSize,
+        style = Stroke(stroke, cap = StrokeCap.Butt),
+    )
+    // 下半弧「结束」: 录音中=珊瑚红,待机=暗灰(禁用)
+    drawArc(
+        color = if (recording) CORAL else TRACK_OFF,
+        startAngle = 90f - 82f, sweepAngle = 164f, useCenter = false,
+        topLeft = topLeft, size = arcSize,
+        style = Stroke(stroke, cap = StrokeCap.Butt),
+    )
 
-                if (glow) {
-                    drawCircle(color = ringColor.copy(alpha = glowAlpha), radius = size.minDimension / 2 - stroke)
-                }
-                // 轨道环(未激活时低透明度)
-                drawArc(
-                    color = ringColor.copy(alpha = if (active) 0.9f else 0.32f),
-                    startAngle = -90f, sweepAngle = 360f, useCenter = false,
-                    topLeft = topLeft, size = arcSize,
-                    style = Stroke(stroke, cap = StrokeCap.Round),
-                )
-                // 进度弧(与轨道同宽,白色覆盖)
-                val p = progress().coerceIn(0f, 1f)
-                if (active && p > 0.004f) {
-                    drawArc(
-                        color = Color.White,
-                        startAngle = -90f, sweepAngle = 360f * p, useCenter = false,
-                        topLeft = topLeft, size = arcSize,
-                        style = Stroke(stroke, cap = StrokeCap.Round),
-                    )
-                }
-            }
-            Text(glyph, fontSize = 20.sp, color = glyphColor.copy(alpha = if (active) 1f else 0.55f))
-        }
-        Spacer(Modifier.height(4.dp))
-        Text(
-            label,
-            fontSize = 10.sp,
-            color = if (active) Color(0xFFDDE6F2) else Color(0xFF56627A),
+    // 弧内标签(黑字,嵌在弧带中心线上)
+    drawArcLabel(
+        "开始", Offset(cx, cy - pathR),
+        textSize = m * 0.072f, on = !recording,
+    )
+    drawArcLabel(
+        "结束", Offset(cx, cy + pathR),
+        textSize = m * 0.072f, on = recording,
+    )
+
+    // 内圈细进度弧(分钟进度,薄荷绿),与主环之间留空隙
+    if (recording && minuteP > 0.003f) {
+        val pStroke = m * 0.0086f
+        val pR = pathR - stroke / 2f - m * 0.022f - pStroke / 2f
+        drawArc(
+            color = MINT_LIGHT,
+            startAngle = -90f, sweepAngle = 360f * minuteP, useCenter = false,
+            topLeft = Offset(cx - pR, cy - pR),
+            size = Size(pR * 2, pR * 2),
+            style = Stroke(pStroke, cap = StrokeCap.Butt),
         )
     }
+}
+
+private fun DrawScope.drawArcLabel(text: String, center: Offset, textSize: Float, on: Boolean) {    val color = if (on) LABEL_ON else Color(0xFF63636A)
+    val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        this.color = android.graphics.Color.argb(
+            (color.alpha * 255).toInt(),
+            (color.red * 255).toInt(), (color.green * 255).toInt(), (color.blue * 255).toInt()
+        )
+        this.textSize = textSize
+        isFakeBoldText = true
+        textAlign = Paint.Align.CENTER
+    }
+    drawContext.canvas.nativeCanvas.drawText(
+        text, center.x, center.y - (paint.descent() + paint.ascent()) / 2f, paint
+    )
 }

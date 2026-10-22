@@ -521,19 +521,56 @@ $('btnUpload').onclick=()=>{
   const names=[...sel].filter(n=>S.inbox.find(f=>f.name===n));
   if(!names.length) return toast('在「本地待解析」里勾选要上传的录音',1);
   pendingUpload=names;
+  const c=S.config;
   const bar=$('confirmBar');
-  bar.innerHTML=`将上传 <b>${names.length}</b> 个录音到百炼解析(转写${S.config.minutes_enabled?' + 纪要':''},按量计费)
-    <button class="btn-blue btn-sm" id="doUpload">确认上传</button>
-    <button class="btn btn-sm" id="cancelUpload">取消</button>`;
+  bar.innerHTML=`
+    <div style="font-weight:700;margin-bottom:10px">解析参数 — 将上传 <b>${names.length}</b> 个录音(按量计费)</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px 14px">
+      <div class="field" style="margin:0">
+        <label>会议主题 <span class="opt">选填</span></label>
+        <input type="text" id="pmTitle" placeholder="如:产品周会(留空自动归纳)">
+      </div>
+      <div class="field" style="margin:0">
+        <label>语种</label>
+        <select id="pmLang">
+          <option value="zh,en"${(c.language_hints==='zh,en'||!c.language_hints)?' selected':''}>中英混合</option>
+          <option value="zh"${c.language_hints==='zh'?' selected':''}>中文</option>
+          <option value="en"${c.language_hints==='en'?' selected':''}>英文</option>
+        </select>
+      </div>
+      <div class="field" style="margin:0">
+        <label>转写模型</label>
+        <input type="text" id="pmAsr" value="${c.asr_model||'paraformer-v2'}">
+      </div>
+      <div class="field" style="margin:0">
+        <label>纪要模型 <span class="opt">${c.minutes_enabled?'':'(未开启纪要)'}</span></label>
+        <input type="text" id="pmLlm" value="${c.minutes_model||'qwen-plus'}">
+      </div>
+      <label class="switch" style="grid-column:1"><input type="checkbox" id="pmDiar"${c.diarization?' checked':''}> 说话人分离(区分不同发言人)</label>
+      <label class="switch" style="grid-column:2"><input type="checkbox" id="pmMin"${c.minutes_enabled?' checked':''}> 生成会议纪要(不勾则仅转写)</label>
+    </div>
+    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn btn-sm" id="cancelUpload">取消</button>
+      <button class="btn-blue btn-sm" id="doUpload">确认上传解析</button>
+    </div>`;
   bar.classList.add('show');
-  $('doUpload').onclick=doUpload;
   $('cancelUpload').onclick=hideConfirm;
+  $('doUpload').onclick=doUpload;
+  $('pmTitle').focus();
 };
 function hideConfirm(){pendingUpload=null;$('confirmBar').classList.remove('show')}
 async function doUpload(){
-  const r=await api('/api/submit',{files:pendingUpload});
+  const params={
+    title:$('pmTitle').value.trim(),
+    language_hints:$('pmLang').value,
+    asr_model:$('pmAsr').value.trim()||'paraformer-v2',
+    minutes_model:$('pmLlm').value.trim()||'qwen-plus',
+    diarization:$('pmDiar').checked,
+    minutes_enabled:$('pmMin').checked,
+  };
+  const r=await api('/api/submit',{files:pendingUpload,params});
   hideConfirm();
-  if(r.ok){toast(`已加入队列 ${r.added.length} 个 ✔`); sel.clear(); render();}
+  if(r.ok){toast(`已加入队列 ${r.added.length} 个 ✔`); sel.clear(); render(); poll();}
   else toast(r.msg||'提交失败',1);
 }
 
