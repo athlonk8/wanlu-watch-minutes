@@ -12,8 +12,8 @@ android {
         applicationId = "com.zcode.watchrec"
         minSdk = 29
         targetSdk = 35
-        versionCode = 10
-        versionName = "2.2"
+        versionCode = 11
+        versionName = "2.2.1"
     }
 
     buildTypes {
@@ -21,7 +21,7 @@ android {
             // Install safely beside an existing APK when its original signing key is unavailable.
             if (providers.gradleProperty("wanluPreview").orNull == "true") {
                 applicationIdSuffix = ".preview"
-                resValue("string", "app_name", "腕录 2.2")
+                resValue("string", "app_name", "腕录 2.2.1")
             }
         }
     }
