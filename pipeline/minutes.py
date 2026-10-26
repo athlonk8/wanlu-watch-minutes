@@ -16,6 +16,7 @@ import json
 import os
 import sys
 import time
+import uuid
 from pathlib import Path
 
 import requests
@@ -42,6 +43,7 @@ DEFAULTS = {
     "minutes_key": "",
     "watch_serial": "",
     "watch_addr": "",
+    "watch_package": "",
     "cloud_provider": "",          # "" 不启用 | dingtalk | feishu | custom
     "cloud_webhook": "",
     "cloud_secret": "",
@@ -51,8 +53,8 @@ DEFAULTS = {
 
 
 def load_config() -> dict:
-    cfg = configparser.ConfigParser()
-    cfg.read(HERE / "config.ini", encoding="utf-8")
+    cfg = configparser.ConfigParser(interpolation=None)
+    cfg.read(config_path(), encoding="utf-8")
     out = dict(DEFAULTS)
     env_key = os.environ.get("DASHSCOPE_API_KEY", "")
     if cfg.has_option("api", "dashscope_api_key"):
@@ -68,6 +70,7 @@ def load_config() -> dict:
     if cfg.has_section("gui"):
         out["watch_serial"] = cfg.get("gui", "watch_serial", fallback="")
         out["watch_addr"] = cfg.get("gui", "watch_addr", fallback="")
+        out["watch_package"] = cfg.get("gui", "watch_package", fallback="")
     if cfg.has_section("cloud"):
         out["cloud_provider"] = cfg.get("cloud", "provider", fallback="").strip()
         out["cloud_webhook"] = cfg.get("cloud", "webhook", fallback="").strip()
@@ -79,7 +82,7 @@ def load_config() -> dict:
 
 
 def save_config(cfg: dict):
-    cp = configparser.ConfigParser()
+    cp = configparser.ConfigParser(interpolation=None)
     cp["api"] = {"dashscope_api_key": cfg.get("api_key", "")}
     cp["asr"] = {
         "model": cfg.get("asr_model", "paraformer-v2"),
@@ -95,6 +98,7 @@ def save_config(cfg: dict):
     cp["gui"] = {
         "watch_serial": cfg.get("watch_serial", ""),
         "watch_addr": cfg.get("watch_addr", ""),
+        "watch_package": cfg.get("watch_package", ""),
     }
     cp["cloud"] = {
         "provider": cfg.get("cloud_provider", ""),
@@ -105,29 +109,60 @@ def save_config(cfg: dict):
         "serial": cfg.get("phone_serial", ""),
         "share": "true" if cfg.get("phone_share") else "false",
     }
-    with open(HERE / "config.ini", "w", encoding="utf-8") as f:
-        cp.write(f)
+    from io import StringIO
+    content = StringIO()
+    cp.write(content)
+    target = config_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    write_text_atomic(target, content.getvalue())
+
+
+def config_path():
+    return Path(os.environ["WANLU_DATA_DIR"]) / "config.ini" if os.environ.get("WANLU_DATA_DIR") else HERE / "config.ini"
 
 
 def die(msg):
     raise MinutesError(msg)
 
+
+def response_json(response, action):
+    """Return provider JSON without putting credentials or signed URLs in logs."""
+    if not 200 <= response.status_code < 300:
+        die(f"{action}失败 HTTP {response.status_code}，请检查密钥、模型和服务额度")
+    try:
+        data = response.json()
+    except ValueError:
+        die(f"{action}返回了无效 JSON")
+    if not isinstance(data, dict):
+        die(f"{action}返回格式异常")
+    return data
+
+
+def write_text_atomic(path: Path, text: str):
+    temp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        temp.write_text(text, encoding="utf-8")
+        temp.replace(path)
+    finally:
+        temp.unlink(missing_ok=True)
+
 # ---------------------------------------------------------------- 1. 上传本地音频 → oss:// 临时URL(48h)
 
-def upload_audio(path: Path, api_key: str, progress=print) -> str:
+def upload_audio(path: Path, api_key: str, progress=print, model="paraformer-v2") -> str:
     r = requests.get(
         f"{DASHSCOPE}/api/v1/uploads",
-        params={"action": "getPolicy", "model": "paraformer-v2"},
+        params={"action": "getPolicy", "model": model},
         headers={"Authorization": f"Bearer {api_key}"},
         timeout=30,
     )
-    if r.status_code != 200:
-        die(f"获取上传凭证失败 HTTP {r.status_code}: {r.text[:300]}")
-    data = r.json().get("data", {})
+    data = response_json(r, "获取上传凭证").get("data", {})
     try:
-        key = data["upload_dir"].rstrip("/") + "/" + path.name
+        key = data["upload_dir"].rstrip("/") + "/" + uuid.uuid4().hex + path.suffix.lower()
+        for field in ("oss_access_key_id", "signature", "policy", "upload_host"):
+            if not data.get(field):
+                raise KeyError(field)
     except KeyError:
-        die(f"上传凭证缺少字段: {json.dumps(data, ensure_ascii=False)[:300]}")
+        die("上传凭证缺少必要字段")
 
     form = [
         ("OSSAccessKeyId", (None, data["oss_access_key_id"])),
@@ -136,12 +171,14 @@ def upload_audio(path: Path, api_key: str, progress=print) -> str:
         ("key", (None, key)),
         ("x-oss-object-acl", (None, data.get("x_oss_object_acl", "public-read"))),
         ("x-oss-forbid-overwrite", (None, data.get("x_oss_forbid_overwrite", "true"))),
-        ("file", (str(path), open(path, "rb"), "application/octet-stream")),
     ]
-    r2 = requests.post(data["upload_host"], files=form, timeout=600)
+    with path.open("rb") as source:
+        r2 = requests.post(data["upload_host"], files=form + [
+            ("file", (path.name, source, "application/octet-stream")),
+        ], timeout=600)
     if r2.status_code not in (200, 204):
-        die(f"上传 OSS 失败 HTTP {r2.status_code}: {r2.text[:300]}")
-    progress(f"已上传 → oss://{key}")
+        die(f"上传 OSS 失败 HTTP {r2.status_code}")
+    progress("音频已上传至临时存储")
     return f"oss://{key}"
 
 # ---------------------------------------------------------------- 2. 提交转写任务并轮询
@@ -162,36 +199,43 @@ def transcribe(oss_url: str, cfg: dict, progress=print) -> dict:
             "Authorization": f"Bearer {cfg['api_key']}",
             "Content-Type": "application/json",
             "X-DashScope-Async": "enable",
+            "X-DashScope-OssResourceResolve": "enable",
         },
         json=body,
         timeout=60,
     )
-    j = r.json()
-    if r.status_code != 200 or "task_id" not in j.get("output", {}):
-        die(f"提交转写任务失败: {json.dumps(j, ensure_ascii=False)[:300]}")
+    j = response_json(r, "提交转写任务")
+    if "task_id" not in j.get("output", {}):
+        die("提交转写任务失败，服务未返回任务编号")
     task_id = j["output"]["task_id"]
     progress(f"转写任务 {task_id} 已提交")
 
     deadline = time.time() + 40 * 60
     while time.time() < deadline:
         time.sleep(8)
-        q = requests.post(
+        q = response_json(requests.get(
             f"{DASHSCOPE}/api/v1/tasks/{task_id}",
             headers={"Authorization": f"Bearer {cfg['api_key']}"},
             timeout=30,
-        ).json()
+        ), "查询转写任务")
         out = q.get("output", {})
         status = out.get("task_status", "")
-        if status == "SUCCEEDED" and out.get("subtask_status") in (None, "SUCCEEDED"):
-            url = out.get("transcription_url")
+        if status == "SUCCEEDED":
+            # Paraformer returns per-file results, even for a single recording.
+            results = out.get("results") or [out]
+            item = next((r for r in results if r.get("file_url") == oss_url), results[0])
+            if item.get("subtask_status") == "FAILED":
+                die("音频转写失败，请检查音频格式、内容和服务额度")
+            url = item.get("transcription_url")
             if not url:
-                die(f"任务成功但没有 transcription_url: {json.dumps(out)[:300]}")
+                die("任务成功但没有返回转写下载地址")
             progress("转写完成,下载结果…")
             res = requests.get(url, timeout=120)
-            res.raise_for_status()
-            return res.json()
+            return response_json(res, "下载转写结果")
         if status in ("FAILED", "CANCELED") or out.get("subtask_status") == "FAILED":
-            die(f"转写失败: {json.dumps(q, ensure_ascii=False)[:300]}")
+            die("转写失败或已取消，请检查音频和服务额度")
+        if status not in ("PENDING", "RUNNING"):
+            die("转写服务返回了未知任务状态")
         progress(f"状态 {status} …")
     die("转写超时(40分钟)")
 
@@ -207,7 +251,9 @@ def parse_transcription(result: dict, src_name: str) -> str:
     for t in result.get("transcripts", []):
         sentences.extend(t.get("sentences", []))
     if not sentences:
-        die("转写结果里没有 sentences")
+        die("录音中未识别到有效语音，原始结果已保留")
+
+    sentences.sort(key=lambda s: s.get("begin_time", 0))
 
     speaker_ids = []
     for s in sentences:
@@ -215,7 +261,8 @@ def parse_transcription(result: dict, src_name: str) -> str:
             speaker_ids.append(s.get("speaker_id"))
     label = {}
     for i, spk in enumerate(speaker_ids):
-        label[spk] = f"说话人{'ABCDEFGH'[i]}({spk})" if len(speaker_ids) > 1 else ""
+        tag = chr(65 + i) if i < 26 else str(i + 1)
+        label[spk] = f"说话人{tag}({spk})" if len(speaker_ids) > 1 else ""
     lines = []
     for s in sentences:
         who = label[s.get("speaker_id")]
@@ -240,6 +287,8 @@ USER_TMPL = """请把下面的会议转写(带时间戳和说话人)整理成 Ma
 ## 风险与待跟进
 
 要求:忠于原文;过滤寒暄和无意义内容;保留数字、日期、金额、人名等关键信息。
+为核心要点、决议和待办标注原文时间戳，便于回查。不要把说话人标签猜测成真实姓名。
+没有明确决议时写“未明确”；负责人、期限或参会人姓名未提及时写“待定”。
 {title_line}
 会议转写如下:
 {transcript}"""
@@ -259,37 +308,55 @@ def make_minutes(transcript_md: str, cfg: dict, progress=print, title: str = "")
             "temperature": 0.3,
             "messages": [
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": USER_TMPL.format(transcript=body_text)},
+                {"role": "user", "content": USER_TMPL.format(
+                    transcript=body_text,
+                    title_line=f"用户提供的会议主题：{title}" if title else "会议主题请根据原文归纳。",
+                )},
             ],
         },
         timeout=300,
     )
-    j = r.json()
+    j = response_json(r, "生成纪要")
     try:
-        return j["choices"][0]["message"]["content"].strip()
-    except Exception:
-        die(f"生成纪要失败: {json.dumps(j, ensure_ascii=False)[:300]}")
+        choice = j["choices"][0]
+        content = choice["message"]["content"].strip()
+        if not content or choice.get("finish_reason") in ("length", "content_filter"):
+            die("纪要为空、被截断或被过滤，已保留转写，请调整模型后仅重试纪要")
+        return content
+    except (KeyError, IndexError, TypeError, AttributeError):
+        die("生成纪要返回格式异常，已保留转写，可仅重试纪要")
+
+
+def regenerate_minutes(result_dir: Path, cfg: dict, progress=print, title: str = "") -> Path:
+    """Only send saved text to the LLM; never upload or transcribe audio again."""
+    transcript = result_dir / "转写.md"
+    if not transcript.is_file():
+        die("没有可用的转写，请先完成录音转写")
+    if not cfg.get("minutes_key"):
+        die("请先配置纪要模型 API Key")
+    md = make_minutes(transcript.read_text(encoding="utf-8"), cfg, progress, title=title)
+    write_text_atomic(result_dir / "会议纪要.md", md + "\n")
+    progress("纪要已保存")
+    return result_dir
 
 # ---------------------------------------------------------------- 主流程
 
-def process(path: Path, cfg: dict, out_dir: Path, progress=print, title: str = "") -> Path:
+def process(path: Path, cfg: dict, out_dir: Path, progress=print, title: str = "", result_name=None) -> Path:
     """处理单个音频,返回输出目录。进度通过 progress(str) 回调。"""
-    stem_dir = out_dir / path.stem
+    stem_dir = out_dir / (result_name or path.stem)
     stem_dir.mkdir(parents=True, exist_ok=True)
     try:
-        oss_url = upload_audio(path, cfg["api_key"], progress)
+        oss_url = upload_audio(path, cfg["api_key"], progress, model=cfg["asr_model"])
         result = transcribe(oss_url, cfg, progress)
     except MinutesError:
         raise
-    (stem_dir / "raw.json").write_text(json.dumps(result, ensure_ascii=False, indent=1), encoding="utf-8")
+    write_text_atomic(stem_dir / "raw.json", json.dumps(result, ensure_ascii=False, indent=1))
     transcript_md = parse_transcription(result, path.name)
-    (stem_dir / "转写.md").write_text(transcript_md, encoding="utf-8")
+    write_text_atomic(stem_dir / "转写.md", transcript_md)
     progress(f"转写已保存 → {stem_dir / '转写.md'}")
 
     if cfg.get("minutes_enabled", True):
-        md = make_minutes(transcript_md, cfg, progress, title=title)
-        (stem_dir / "会议纪要.md").write_text(md + "\n", encoding="utf-8")
-        progress(f"纪要已生成 → {stem_dir / '会议纪要.md'}")
+        regenerate_minutes(stem_dir, cfg, progress, title=title)
     return stem_dir
 
 

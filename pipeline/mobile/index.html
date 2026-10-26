@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>腕录 · 会议纪要</title><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script></head>
+<body><main>
+<header><div class="mark">腕</div><div><h1>腕录</h1><p>让每一段对话，有所留下。</p></div><button id="logout" hidden>退出</button></header>
+<section id="login"><h2>你的会议，随时回看</h2><p>输入与手表相同的云端口令。手表负责录音，这里留存转写与纪要。</p><form id="login-form"><label for="token">云端口令</label><input id="token" type="password" autocomplete="current-password" required><button class="primary" type="submit">进入我的录音</button></form></section>
+<p id="notice" role="status" aria-live="polite"></p>
+<section id="library" hidden><div class="section-title"><h2>会议记录</h2><button id="refresh">刷新</button></div><div id="jobs"></div></section>
+<section id="detail" hidden><button id="back">← 全部记录</button><h2 id="detail-title"></h2><div class="tabs"><button id="show-minutes">会议纪要</button><button id="show-transcript">完整转写</button><button id="download">下载 .md</button></div><pre id="content" tabindex="0"></pre></section>
+<footer>录音在手腕 · 纪要在手机</footer>
+</main></body></html>

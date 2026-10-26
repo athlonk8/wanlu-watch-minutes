@@ -1,0 +1,12 @@
+.git
+.env
+**/config.ini
+**/__pycache__
+**/.gradle
+**/build
+inbox
+out
+cloud-data
+*.log
+watchrec_app
+docs

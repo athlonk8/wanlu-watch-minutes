@@ -1,0 +1,66 @@
+{
+  "name": "wanlu-tingwu-desktop",
+  "version": "2.3.0",
+  "private": true,
+  "description": "Official Tingwu login companion for the local WanLu panel",
+  "main": "desktop/main.cjs",
+  "scripts": {
+    "install:desktop": "node node_modules/electron/install.js",
+    "start": "electron .",
+    "build:windows": "powershell -NoProfile -File scripts/build-windows.ps1",
+    "package:windows": "electron-builder --win nsis zip --x64 --publish never"
+  },
+  "devDependencies": {
+    "electron": "45.0.0",
+    "electron-builder": "26.18.0"
+  },
+  "productName": "腕录",
+  "author": {
+    "name": "athlonk8"
+  },
+  "homepage": "https://github.com/athlonk8/wanlu-watch-minutes",
+  "license": "MIT",
+  "build": {
+    "appId": "com.wanlu.desktop",
+    "productName": "腕录",
+    "directories": {
+      "output": "dist-desktop",
+      "buildResources": "desktop/assets"
+    },
+    "files": [
+      "desktop/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": ".local/backend/wanlu-backend",
+        "to": "backend"
+      },
+      {
+        "from": ".local/adb",
+        "to": "adb"
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "zip"
+      ],
+      "icon": "desktop/assets/icon.ico",
+      "artifactName": "WanLu-${version}-Windows-x64.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "deleteAppDataOnUninstall": false,
+      "installerLanguages": [
+        "zh_CN",
+        "en_US"
+      ],
+      "displayLanguageSelector": false,
+      "license": "LICENSE"
+    }
+  }
+}

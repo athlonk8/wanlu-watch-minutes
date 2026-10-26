@@ -33,9 +33,7 @@ object RecorderState {
     val files = MutableStateFlow<List<RecFile>>(emptyList())
 
     fun refreshFiles(context: Context) {
-        val dir = context.getExternalFilesDir(null) ?: return
-        val list = dir.listFiles { f -> f.isFile && f.extension == "m4a" }
-            ?.sortedByDescending { it.name } ?: emptyList()
+        val list = RecordingStorage.recordings(context)
         files.value = list.map { RecFile(it.name, it.length(), it.lastModified()) }
         val total = list.sumOf { it.length() }
         filesSummary.value = when {
@@ -49,8 +47,7 @@ object RecorderState {
     fun deleteFile(context: Context, name: String): Boolean {
         if (isRecording.value) return false
         if (name.contains('/') || name.contains('\\') || name.contains("..")) return false
-        val dir = context.getExternalFilesDir(null) ?: return false
-        val f = File(dir, name)
+        val f = RecordingStorage.find(context, name) ?: return false
         if (!f.isFile || f.extension != "m4a") return false
         val ok = f.delete()
         refreshFiles(context)
@@ -102,8 +99,8 @@ class RecorderService : Service() {
     }
 
     private fun startRecording() {
-        val dir = getExternalFilesDir(null) ?: filesDir
-        val name = "REC_" + SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date()) + ".m4a"
+        val dir = filesDir
+        val name = "REC_" + SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date()) + ".m4a"
         val file = File(dir, name)
 
         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
@@ -169,6 +166,10 @@ class RecorderService : Service() {
             RecorderState.isRecording.value = false
             buzz(90)
             RecorderState.refreshFiles(applicationContext)
+            outFile?.takeIf { it.isFile && it.length() > 0 && TingwuUploads.automatic(applicationContext) }?.let { saved ->
+                runCatching { TingwuUploads.enqueue(applicationContext, saved.name) }
+                    .onFailure { RecorderState.error.value = "录音已保存，连接听悟后可上传" }
+            }
         }
         outFile = null
     }
