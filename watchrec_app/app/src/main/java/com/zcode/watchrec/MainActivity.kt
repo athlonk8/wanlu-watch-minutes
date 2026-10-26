@@ -26,18 +26,21 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -45,6 +48,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.work.WorkManager
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -72,6 +78,10 @@ class MainActivity : ComponentActivity() {
     }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            hide(WindowInsetsCompat.Type.systemBars())
+            systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        }
         // Use the ordinary Tingwu website session; disable legacy developer-backend jobs.
         CloudSettings.prefs(this).edit().putBoolean("enabled", false).apply()
         WorkManager.getInstance(this).cancelAllWorkByTag(CloudUploads.TAG)
@@ -104,8 +114,12 @@ fun App() {
                 HorizontalPager(state = pager, modifier = Modifier.fillMaxSize()) { page ->
                     when (page) {
                         0 -> RecordPage()
-                        1 -> FilesPage(onShare = { scope.launch { pager.animateScrollToPage(2) } })
-                        else -> PhoneTransferPage(onPick = { scope.launch { pager.animateScrollToPage(1) } })
+                        1 -> Box(Modifier.fillMaxSize().padding(bottom = 26.dp)) {
+                            FilesPage(onShare = { scope.launch { pager.animateScrollToPage(2) } })
+                        }
+                        else -> Box(Modifier.fillMaxSize().padding(bottom = 26.dp)) {
+                            PhoneTransferPage(onPick = { scope.launch { pager.animateScrollToPage(1) } })
+                        }
                     }
                 }
                 Row(Modifier.align(Alignment.BottomCenter).padding(bottom = 14.dp), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
@@ -135,28 +149,36 @@ fun RecordPage() {
     val seconds = if (recording) ((tick - started) / 1000).coerceAtLeast(0) else 0
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val compact = maxHeight < 220.dp
+        val controlWidth = (maxWidth * .72f).coerceAtMost(168.dp)
         Canvas(Modifier.fillMaxSize().padding(9.dp)) {
+            drawCircle(Brush.radialGradient(listOf(Mint.copy(alpha = .07f), Color.Transparent)), radius = size.minDimension * .45f)
             drawCircle(Muted.copy(alpha = .12f), style = Stroke(2.dp.toPx()))
             if (recording) drawArc(Red, -90f, (seconds % 60) * 6f, false, style = Stroke(3.dp.toPx(), cap = StrokeCap.Round))
         }
-        Column(Modifier.fillMaxSize().padding(top = if (compact) 22.dp else 30.dp, bottom = 33.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.SpaceEvenly) {
+        Column(Modifier.fillMaxSize().padding(top = if (compact) 22.dp else 27.dp, bottom = 30.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.SpaceEvenly) {
             Text(if (recording) "●  正在录音" else "腕录", color = if (recording) Red else Mint, fontSize = 12.sp, fontWeight = FontWeight.Medium)
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(if (seconds >= 3600) "%d:%02d:%02d".format(seconds / 3600, seconds / 60 % 60, seconds % 60) else "%02d:%02d".format(seconds / 60, seconds % 60),
-                    color = Color.White, fontSize = if (compact) 32.sp else 40.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Light)
+                    color = Color.White, fontSize = if (compact) 30.sp else 36.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Medium)
                 Text(if (recording) "息屏也会继续录音" else summary.ifEmpty { "随时记录重要的话" }, color = Muted, fontSize = 10.sp)
             }
-            Button(onClick = {
+            GlossyButton(onClick = {
                 if (recording) ctx.startService(Intent(ctx, RecorderService::class.java).setAction(RecorderService.ACTION_STOP))
                 else if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) startRecording(ctx)
                 else permission.launch(if (Build.VERSION.SDK_INT >= 33) arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS) else arrayOf(Manifest.permission.RECORD_AUDIO))
-            }, modifier = Modifier.size(if (compact) 58.dp else 68.dp).semantics { contentDescription = if (recording) "结束并保存录音" else "开始录音" }, shape = CircleShape,
-                colors = ButtonDefaults.buttonColors(containerColor = if (recording) Red else Mint, contentColor = Ink), contentPadding = PaddingValues(0.dp)) {
-                if (recording) Box(Modifier.size(19.dp).background(Ink, RoundedCornerShape(4.dp)))
-                else Canvas(Modifier.size(24.dp)) {
+            }, modifier = Modifier.width(controlWidth).height(if (compact) 68.dp else 78.dp)
+                    .semantics { contentDescription = if (recording) "结束并保存录音" else "开始录音" },
+                tone = if (recording) ButtonTone.Coral else ButtonTone.Mint, contentPadding = PaddingValues(horizontal = 12.dp)) {
+                if (recording) Box(Modifier.size(21.dp).background(Color(0xFF602B33), RoundedCornerShape(5.dp)))
+                else Canvas(Modifier.size(28.dp)) {
                     drawRoundRect(Ink, topLeft = androidx.compose.ui.geometry.Offset(size.width * .36f, 0f), size = androidx.compose.ui.geometry.Size(size.width * .28f, size.height * .65f), cornerRadius = androidx.compose.ui.geometry.CornerRadius(8f))
                     drawArc(Ink, 0f, 180f, false, topLeft = androidx.compose.ui.geometry.Offset(size.width * .18f, size.height * .2f), size = androidx.compose.ui.geometry.Size(size.width * .64f, size.height * .65f), style = Stroke(2.dp.toPx(), cap = StrokeCap.Round))
                     drawLine(Ink, androidx.compose.ui.geometry.Offset(size.width / 2, size.height * .85f), androidx.compose.ui.geometry.Offset(size.width / 2, size.height), 2.dp.toPx())
+                }
+                Spacer(Modifier.width(9.dp))
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(if (recording) "结束录音" else "开始录音", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    Text(if (recording) "保存到手表" else "记录这一刻", fontSize = 9.sp)
                 }
             }
             Text(error?.take(24) ?: if (recording) "轻点结束并保存" else "轻点录音 · 左滑文件", color = if (error == null) Muted else Red, fontSize = 10.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 35.dp))
@@ -183,29 +205,35 @@ fun FilesPage(onShare: () -> Unit = {}) {
     var message by remember { mutableStateOf("") }
     LaunchedEffect(Unit) { RecorderState.refreshFiles(ctx) }
     LaunchedEffect(deleting) { if (deleting != null) { delay(3000); deleting = null } }
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 32.dp, vertical = 36.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        item { Text("录音", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Medium, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center) }
-        item { Text(if (recording) "录音中，结束后可管理" else "${files.size} 段 · 纪要请在手机查看", color = Muted, fontSize = 10.sp, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center) }
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 32.dp, vertical = if (expanded == null) 36.dp else 26.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (expanded == null) {
+            item { Text("录音", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Medium, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center) }
+            item { Text(if (recording) "录音中，结束后可管理" else "${files.size} 段 · 纪要请在手机查看", color = Muted, fontSize = 10.sp, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center) }
+        } else if (recording) {
+            item { Text("录音中，结束后可管理", color = Red, fontSize = 10.sp, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center) }
+        }
         if (files.isEmpty()) item { Text("还没有录音\n右滑开始第一段记录", color = Muted, fontSize = 12.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp)) }
         items(files, key = { it.name }) { file ->
             val uploading = uploads.any { !it.state.isFinished && "name:${file.name}" in it.tags }
             val busy = share.file == file.name || (bluetooth.busy && bluetooth.file == file.name) || uploading
-            Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Card).clickable(enabled = !recording) { expanded = if (expanded == file.name) null else file.name; deleting = null }.padding(12.dp)) {
+            Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp))
+                .background(Brush.verticalGradient(listOf(Color(0xFF27343C), Card)))
+                .clickable(enabled = !recording) { expanded = if (expanded == file.name) null else file.name; deleting = null }.padding(12.dp)) {
                 Text(SimpleDateFormat("MM月dd日 HH:mm", Locale.CHINA).format(Date(file.modified)), fontSize = 12.sp, color = Color.White)
                 Text("%.1f MB · %s".format(file.size / 1048576.0, if (uploading) "正在上传听悟" else if (tingwu[file.name]?.done == true) "已上传听悟" else if (busy) "备用传输已开启" else "保存在手表"),
                     color = if (busy) Mint else Muted, fontSize = 10.sp, modifier = Modifier.padding(top = 4.dp))
                 if (expanded == file.name) {
-                    TextButton(onClick = {
+                    GlossyButton(onClick = {
                         try {
                             if (share.file.isNotEmpty()) ctx.stopService(Intent(ctx, PhoneTransferService::class.java))
                             BluetoothTransfers.selected.value = file.name
                             onShare()
                         } catch (_: Exception) { message = "无法开启传输，请重试" }
-                    }, enabled = !recording && (!bluetooth.busy || bluetooth.file == file.name), contentPadding = PaddingValues(horizontal = 0.dp)) { Text(if (busy || tingwu[file.name]?.done == true) "查看上传状态" else "上传听悟", fontSize = 11.sp) }
-                    TextButton(onClick = {
+                    }, modifier = Modifier.fillMaxWidth().padding(top = 12.dp), enabled = !recording && (!bluetooth.busy || bluetooth.file == file.name)) { Text(if (busy || tingwu[file.name]?.done == true) "查看上传状态" else "上传听悟", fontSize = 12.sp, fontWeight = FontWeight.Bold) }
+                    GlossyButton(onClick = {
                         if (deleting == file.name) { RecorderState.deleteFile(ctx, file.name); deleting = null; expanded = null }
                         else deleting = file.name
-                    }, enabled = !recording && !busy, contentPadding = PaddingValues(horizontal = 0.dp)) { Text(if (deleting == file.name) "再点一次确认删除" else "删除本地录音", color = Red, fontSize = 11.sp) }
+                    }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp), enabled = !recording && !busy, tone = ButtonTone.Coral) { Text(if (deleting == file.name) "再点一次确认删除" else "删除本地录音", fontSize = 11.sp, fontWeight = FontWeight.Bold) }
                 }
             }
         }
@@ -235,11 +263,11 @@ fun PhoneTransferPage(onPick: () -> Unit = {}) {
         Text(if (backup || share.file.isNotEmpty()) "备用传输" else "听悟直传", color = Color.White, fontSize = 16.sp)
         if (share.file.isEmpty()) {
             if (backup) {
-                TextButton(onClick = { backup = false }) { Text("返回听悟直传", fontSize = 11.sp) }
+                GlossySecondaryButton(onClick = { backup = false }) { Text("返回听悟直传", fontSize = 11.sp) }
                 BluetoothTransferContent(selected, onPick)
             } else {
                 TingwuTransferContent(selected, onPick)
-                TextButton(onClick = { backup = true }) { Text("蓝牙 / Wi-Fi 备用传输", fontSize = 10.sp) }
+                GlossySecondaryButton(onClick = { backup = true }, modifier = Modifier.padding(top = 16.dp)) { Text("蓝牙 / Wi-Fi 备用传输", fontSize = 10.sp) }
             }
             if (share.error.isNotEmpty()) Text(share.error, color = Red, fontSize = 10.sp)
         } else {
@@ -250,10 +278,10 @@ fun PhoneTransferPage(onPick: () -> Unit = {}) {
             if (share.url.isNotBlank()) Text(share.url.substringBefore('#'), color = Muted, fontSize = 9.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 6.dp))
             Text("配对码 ${share.pin}", color = Mint, fontSize = 13.sp, fontFamily = FontFamily.Monospace, modifier = Modifier.padding(top = 8.dp))
             Text("下载后在听悟手动导入\n仅在自己的热点或可信 Wi-Fi 使用", color = Muted, fontSize = 10.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 12.dp))
-            if (share.url.isBlank()) TextButton(onClick = { ctx.startActivity(Intent(Settings.ACTION_WIFI_SETTINGS)) }) { Text("连接 Wi-Fi", fontSize = 11.sp) }
-            TextButton(onClick = { ctx.startService(Intent(ctx, PhoneTransferService::class.java).setAction(PhoneTransferService.STOP)) }) { Text("结束传输", color = Red, fontSize = 12.sp) }
+            if (share.url.isBlank()) GlossySecondaryButton(onClick = { ctx.startActivity(Intent(Settings.ACTION_WIFI_SETTINGS)) }) { Text("连接 Wi-Fi", fontSize = 11.sp) }
+            GlossySecondaryButton(onClick = { ctx.startService(Intent(ctx, PhoneTransferService::class.java).setAction(PhoneTransferService.STOP)) }) { Text("结束传输", color = Red, fontSize = 12.sp) }
         }
-        Text("腕录 2.2 · 纪要在听悟查看", color = Muted, fontSize = 9.sp, modifier = Modifier.padding(top = 16.dp))
+        Text("腕录 2.2.2 · 纪要在听悟查看", color = Muted, fontSize = 9.sp, modifier = Modifier.padding(top = 16.dp))
     }
 }
 
@@ -268,29 +296,29 @@ private fun BluetoothTransferContent(selected: String, onPick: () -> Unit) {
     LaunchedEffect(permitted, selected) { if (permitted) peers = runCatching { BluetoothTransfers.phones(ctx) }.getOrDefault(emptyList()) }
     if (selected.isEmpty()) {
         Text("把录音发送到已配对手机\n再用你的听悟账号导入。", color = Muted, fontSize = 11.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 16.dp))
-        Button(onClick = onPick, modifier = Modifier.padding(top = 14.dp)) { Text("选择录音", fontSize = 12.sp) }
+        GlossyButton(onClick = onPick, modifier = Modifier.padding(top = 14.dp)) { Text("选择录音", fontSize = 12.sp) }
     } else if (status.busy) {
         Text(status.message, color = Mint, fontSize = 12.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 18.dp))
         LinearProgressIndicator(progress = { if (status.total > 0) status.sent.toFloat() / status.total else 0f }, modifier = Modifier.fillMaxWidth().padding(top = 16.dp))
         Text("请在手机确认蓝牙接收\n原始录音始终保留在手表", color = Muted, fontSize = 10.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 12.dp))
-        TextButton(onClick = { ctx.startService(Intent(ctx, BluetoothTransferService::class.java).setAction(BluetoothTransferService.STOP)) }) { Text("取消发送", color = Red, fontSize = 11.sp) }
+        GlossySecondaryButton(onClick = { ctx.startService(Intent(ctx, BluetoothTransferService::class.java).setAction(BluetoothTransferService.STOP)) }) { Text("取消发送", color = Red, fontSize = 11.sp) }
     } else {
         Text(if (status.file == selected && status.message.isNotBlank()) status.message else "选择已配对的手机接收", color = if (status.done) Mint else Muted, fontSize = 11.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 12.dp))
-        if (!permitted) Button(onClick = { if (Build.VERSION.SDK_INT >= 31) permission.launch(Manifest.permission.BLUETOOTH_CONNECT) }, modifier = Modifier.padding(top = 12.dp)) { Text("允许蓝牙连接", fontSize = 11.sp) }
+        if (!permitted) GlossyButton(onClick = { if (Build.VERSION.SDK_INT >= 31) permission.launch(Manifest.permission.BLUETOOTH_CONNECT) }, modifier = Modifier.padding(top = 12.dp)) { Text("允许蓝牙连接", fontSize = 11.sp) }
         else if (peers.isEmpty()) Text("未找到已配对手机\n请先在系统蓝牙设置中连接手机", color = Muted, fontSize = 11.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 12.dp))
         else peers.forEach { peer ->
-            Button(onClick = {
+            GlossyButton(onClick = {
                 try { ContextCompat.startForegroundService(ctx, Intent(ctx, BluetoothTransferService::class.java).putExtra(BluetoothTransferService.NAME, selected).putExtra(BluetoothTransferService.ADDRESS, peer.address)) }
                 catch (_: Exception) { error = "无法启动发送，请检查蓝牙权限" }
             }, modifier = Modifier.fillMaxWidth().padding(top = 10.dp), contentPadding = PaddingValues(10.dp)) { Text(peer.name, fontSize = 11.sp) }
         }
         if (error.isNotEmpty()) Text(error, color = Red, fontSize = 10.sp)
         Text("手机接收后，在听悟导入文件\n无需更改共享手机网络的设置", color = Muted, fontSize = 10.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 14.dp))
-        TextButton(onClick = {
+        GlossySecondaryButton(onClick = {
             try { ContextCompat.startForegroundService(ctx, Intent(ctx, PhoneTransferService::class.java).putExtra(PhoneTransferService.NAME, selected)) }
             catch (_: Exception) { error = "无法开启 Wi-Fi 传输" }
         }) { Text("同 Wi-Fi 扫码（备用）", fontSize = 10.sp) }
-        TextButton(onClick = onPick) { Text("更换录音", fontSize = 10.sp) }
+        GlossySecondaryButton(onClick = onPick) { Text("更换录音", fontSize = 10.sp) }
     }
 }
 
@@ -306,26 +334,42 @@ private fun TingwuTransferContent(selected: String, onPick: () -> Unit) {
     val busy = jobs.any { !it.state.isFinished }
     val state = states[selected]
     Text(if (connected) "● 听悟账号已连接" else "连接后直接上传到你的听悟", color = if (connected) Mint else Muted, fontSize = 10.sp, modifier = Modifier.padding(top = 8.dp))
-    if (!connected) Button(onClick = { ctx.startActivity(Intent(ctx, TingwuLoginActivity::class.java)) }, modifier = Modifier.fillMaxWidth().padding(top = 10.dp)) { Text("支付宝扫码登录", fontSize = 11.sp) }
+    if (!connected) {
+        Text("手机扫码，连接现有账号", color = Muted, fontSize = 11.sp,
+            textAlign = TextAlign.Center, modifier = Modifier.padding(top = 12.dp))
+        GlossyButton(onClick = { ctx.startActivity(Intent(ctx, TingwuLoginActivity::class.java)) },
+            modifier = Modifier.fillMaxWidth().padding(top = 14.dp)) {
+            Text("支付宝扫码登录", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        }
+        Text("纪要直接在听悟查看", color = Muted, fontSize = 10.sp,
+            textAlign = TextAlign.Center, modifier = Modifier.padding(top = 12.dp, bottom = 10.dp))
+        if (busy) GlossySecondaryButton(onClick = {
+            jobs.filter { !it.state.isFinished }.forEach { WorkManager.getInstance(ctx).cancelWorkById(it.id) }
+        }, modifier = Modifier.padding(top = 8.dp)) { Text("取消上传", color = Red, fontSize = 12.sp) }
+        return
+    }
     if (selected.isBlank()) {
         Text("录音留在手表，直接上传听悟\n手机只提供网络和查看结果", color = Muted, fontSize = 11.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 12.dp))
-        Button(onClick = onPick, modifier = Modifier.padding(top = 12.dp)) { Text("选择录音", fontSize = 12.sp) }
+        GlossyButton(onClick = onPick, modifier = Modifier.padding(top = 12.dp)) { Text("选择录音", fontSize = 12.sp) }
     } else {
         Text(state?.message?.ifBlank { "已选择一段录音" } ?: "已选择一段录音", color = if (state?.done == true) Mint else Muted, fontSize = 11.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 12.dp))
         if (busy) {
             LinearProgressIndicator(progress = { state?.progress ?: 0f }, modifier = Modifier.fillMaxWidth().padding(top = 12.dp))
-            TextButton(onClick = { jobs.filter { !it.state.isFinished }.forEach { WorkManager.getInstance(ctx).cancelWorkById(it.id) } }) { Text("取消上传", color = Red, fontSize = 11.sp) }
+            GlossySecondaryButton(onClick = { jobs.filter { !it.state.isFinished }.forEach { WorkManager.getInstance(ctx).cancelWorkById(it.id) } }) { Text("取消上传", color = Red, fontSize = 11.sp) }
         } else if (state?.done != true) {
-            Button(onClick = { runCatching { TingwuUploads.enqueue(ctx, selected, state?.needsReview == true) }.onFailure { error = it.message ?: "无法开始上传" } },
+            GlossyButton(onClick = { runCatching { TingwuUploads.enqueue(ctx, selected, state?.needsReview == true) }.onFailure { error = it.message ?: "无法开始上传" } },
                 enabled = connected, modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) { Text(if (state?.needsReview == true) "已检查，重新建立任务" else "上传到听悟", fontSize = 11.sp) }
             if (state?.needsReview == true) Text("请先检查手机听悟，重建会新建记录", color = Muted, fontSize = 9.sp, textAlign = TextAlign.Center)
         }
-        TextButton(onClick = onPick) { Text("更换录音", fontSize = 10.sp) }
+        GlossySecondaryButton(onClick = onPick) { Text("更换录音", fontSize = 10.sp) }
     }
     if (error.isNotEmpty()) Text(error, color = Red, fontSize = 10.sp, textAlign = TextAlign.Center)
-    Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text("结束后自动上传", color = Muted, fontSize = 10.sp, modifier = Modifier.weight(1f))
-        Switch(checked = automatic, onCheckedChange = { automatic = it; TingwuUploads.prefs(ctx).edit().putBoolean("automatic", it).apply() }, enabled = connected)
+    Row(Modifier.fillMaxWidth().padding(top = 12.dp).clip(RoundedCornerShape(20.dp)).background(Card)
+        .toggleable(value = automatic, enabled = connected, role = Role.Switch, onValueChange = { automatic = it; TingwuUploads.prefs(ctx).edit().putBoolean("automatic", it).apply() })
+        .padding(horizontal = 10.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text("结束后自动上传", color = if (connected) Color.White else Muted, fontSize = 11.sp, modifier = Modifier.weight(1f))
+        Switch(checked = automatic, onCheckedChange = null, enabled = connected,
+            colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFFE6FFF1), checkedTrackColor = Color(0xFF42B990)))
     }
-    if (connected) TextButton(onClick = { ctx.startActivity(Intent(ctx, TingwuLoginActivity::class.java)) }) { Text("重新连接听悟", fontSize = 10.sp) }
+    if (connected) GlossySecondaryButton(onClick = { ctx.startActivity(Intent(ctx, TingwuLoginActivity::class.java)) }) { Text("重新连接听悟", fontSize = 10.sp) }
 }

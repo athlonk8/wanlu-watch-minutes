@@ -4,6 +4,11 @@ import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.pm.ApplicationInfo
 import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.LayerDrawable
+import android.graphics.drawable.StateListDrawable
+import android.animation.ObjectAnimator
+import android.animation.StateListAnimator
 import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
@@ -30,9 +35,9 @@ class TingwuLoginActivity : Activity() {
         super.onCreate(savedInstanceState)
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         WebView.setWebContentsDebuggingEnabled(applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0)
-        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(Color.BLACK); setPadding(0, 22, 0, 25) }
+        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(Color.BLACK); setPadding(0, dp(14), 0, dp(28)) }
         status = TextView(this).apply { text = "听悟官方登录 · 手机扫码"; setTextColor(Color.WHITE); textSize = 11f; gravity = android.view.Gravity.CENTER }
-        root.addView(status, LinearLayout.LayoutParams(-1, 36))
+        root.addView(status, LinearLayout.LayoutParams(-1, dp(23)))
         browser = WebView(this).apply {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
@@ -57,12 +62,45 @@ class TingwuLoginActivity : Activity() {
         root.addView(browser, LinearLayout.LayoutParams(-1, 0, 1f))
         val buttons = LinearLayout(this).apply { gravity = android.view.Gravity.CENTER }
         listOf("返回" to { finish() }, "登录" to { showOfficialLogin() }, "检查登录" to { checkSession() }).forEach { (label, action) ->
-            buttons.addView(Button(this).apply { text = label; textSize = 10f; setPadding(0,0,0,0); setOnClickListener { action() } }, LinearLayout.LayoutParams(0, 62, 1f))
+            buttons.addView(Button(this).apply {
+                text = label; textSize = 11f; isAllCaps = false
+                setTextColor(Color.rgb(16, 61, 50)); setPadding(0, 0, 0, dp(3))
+                background = glossyBackground()
+                elevation = dp(5).toFloat()
+                val button = this
+                stateListAnimator = StateListAnimator().apply {
+                    addState(intArrayOf(android.R.attr.state_pressed), ObjectAnimator.ofFloat(button, "translationY", dp(2).toFloat()).setDuration(80))
+                    addState(intArrayOf(), ObjectAnimator.ofFloat(button, "translationY", 0f).setDuration(100))
+                }
+                setOnClickListener { action() }
+            }, LinearLayout.LayoutParams(0, dp(46), 1f).apply { setMargins(dp(2), 0, dp(2), 0) })
         }
-        root.addView(buttons, LinearLayout.LayoutParams(-1, 62).apply { setMargins(60, 0, 60, 0) })
+        root.addView(buttons, LinearLayout.LayoutParams(-1, dp(50)).apply { setMargins(dp(29), dp(4), dp(29), 0) })
         setContentView(root)
         browser.loadUrl("${TingwuSession.ORIGIN}/register/login?tw_redirect=${Uri.encode(TingwuSession.ORIGIN + "/home")}")
         handler.postDelayed(object : Runnable { override fun run() { if (!closed) { prepareQrLayout(); checkSession(); handler.postDelayed(this, 4_000) } } }, 4_000)
+    }
+
+    private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
+
+    private fun glossyBackground(): StateListDrawable {
+        fun face(pressed: Boolean): LayerDrawable {
+            val edge = GradientDrawable().apply { setColor(Color.rgb(25, 119, 95)); cornerRadius = dp(23).toFloat() }
+            val surface = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(Color.rgb(215, 255, 233), Color.rgb(138, 241, 197), Color.rgb(67, 197, 158))).apply {
+                cornerRadius = dp(23).toFloat(); setStroke(dp(1), Color.argb(95, 255, 255, 255))
+            }
+            val gloss = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(Color.argb(130, 255, 255, 255), Color.argb(8, 255, 255, 255))).apply { cornerRadius = dp(18).toFloat() }
+            return LayerDrawable(arrayOf(edge, surface, gloss)).apply {
+                setLayerInset(1, 0, if (pressed) dp(2) else 0, 0, if (pressed) dp(1) else dp(4))
+                setLayerInset(2, dp(4), dp(3), dp(4), dp(25))
+            }
+        }
+        return StateListDrawable().apply {
+            addState(intArrayOf(android.R.attr.state_pressed), face(true))
+            addState(intArrayOf(), face(false))
+        }
     }
 
     private fun showOfficialLogin() {
