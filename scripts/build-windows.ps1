@@ -33,7 +33,11 @@ npm run package:windows
 if ($LASTEXITCODE -ne 0) { throw 'Desktop package failed' }
 $artifacts = Get-ChildItem -LiteralPath (Join-Path $projectRoot 'dist-desktop') -File | Where-Object Extension -In '.exe','.zip'
 $hashes = foreach ($artifact in $artifacts) {
-    $digest = Get-FileHash -LiteralPath $artifact.FullName -Algorithm SHA256
-    "$($digest.Hash.ToLower())  $($artifact.Name)"
+    $stream = [System.IO.File]::OpenRead($artifact.FullName)
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $digest = [System.BitConverter]::ToString($sha256.ComputeHash($stream)).Replace('-', '').ToLowerInvariant()
+        "$digest  $($artifact.Name)"
+    } finally { $stream.Dispose(); $sha256.Dispose() }
 }
 $hashes | Set-Content -LiteralPath (Join-Path $projectRoot 'dist-desktop/SHA256SUMS.txt') -Encoding ascii
