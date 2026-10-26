@@ -13,6 +13,7 @@ build.log
 
 # Android 构建
 watchrec_app/.gradle/
+watchrec_app/.kotlin/
 watchrec_app/app/build/
 watchrec_app/build/
 watchrec_app/local.properties
@@ -24,3 +25,5 @@ Thumbs.db
 panel.log
 dchk.sh
 ui_dump.xml
+.env
+cloud-data/

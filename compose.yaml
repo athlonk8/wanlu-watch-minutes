@@ -1,0 +1,22 @@
+services:
+  wanlu:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8734:8734"
+    environment:
+      WANLU_TOKEN: ${WANLU_TOKEN:?Set a random access token of at least 32 characters}
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:?Set the provider API key on the NAS only}
+    volumes:
+      - wanlu-data:/data
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "2"
+volumes:
+  wanlu-data:

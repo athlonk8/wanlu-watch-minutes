@@ -12,8 +12,18 @@ android {
         applicationId = "com.zcode.watchrec"
         minSdk = 29
         targetSdk = 35
-        versionCode = 6
-        versionName = "1.5"
+        versionCode = 10
+        versionName = "2.2"
+    }
+
+    buildTypes {
+        getByName("debug") {
+            // Install safely beside an existing APK when its original signing key is unavailable.
+            if (providers.gradleProperty("wanluPreview").orNull == "true") {
+                applicationIdSuffix = ".preview"
+                resValue("string", "app_name", "腕录 2.2")
+            }
+        }
     }
 
     compileOptions {
@@ -32,4 +42,8 @@ dependencies {
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
+    implementation("com.google.zxing:core:3.5.3")
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
 }

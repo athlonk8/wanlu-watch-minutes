@@ -1,6 +1,39 @@
-# 腕录 WanLu — OPPO 手表录音 → AI 会议纪要
+# 腕录 WanLu 2.2 — 手表直传听悟，手机看纪要
 
-**手表一键录音，回到电脑自动转写成带说话人标注的文稿，并生成结构化会议纪要，一键发手机或同步到钉钉/飞书群。**
+> 当前为 2.2 开发预览版，尚未发布到 Releases。已在 OWW261 手表验证支付宝扫码登录、借手机共享网络直接上传，以及听悟云端处理状态确认。
+
+**手表录音，通过手机共享网络直接上传你现有的通义听悟账号。日常不需要电脑中转，也不需要手机手动接收录音、导入文件或另外配置百炼 Key。**
+
+新版针对 OPPO Watch 圆屏重新设计：黑底、大计时器、单个录音/停止按钮。三页分别为录音、本地文件和听悟直传；转写和纪要在手机听悟查看。
+
+```text
+Android 手表 ──借用手机网络直接上传──> 现有通义听悟账号 ──> 手机查看
+```
+
+- 首次在手表打开“支付宝扫码登录”，用支付宝确认官方登录；登录过期时重新扫码。
+- 在文件列表选择录音，点“上传听悟”，第三页确认上传。可开启“结束后自动上传”，只处理之后新录制并保存的录音。
+- 上传和处理失败都会保留手表原件；恢复任务时先核对已有云端记录，避免重复创建。
+- 已配对手机共享的网络继续正常使用，无需为上网专门开启热点。
+- 标准蓝牙文件发送和同 Wi-Fi 临时网页下载仅作为备用，见 [备用传输指南](docs/phone-tingwu.md)。
+- 接入复用听悟官网的登录与上传流程，属于实验性网页兼容适配，未开通或调用开发者 API。官网改版可能需要更新适配；听悟账号自身额度和存储规则适用。
+- 直传验证细节见 [听悟直传记录](docs/tingwu-direct-status.md)。
+- 仓库中的 `pipeline/cloud_server.py`、Docker Compose 与 [云端部署指南](docs/cloud-deploy.md) 属于保留的可选开发者后端，普通听悟账号方案不需要它们。
+
+| 待机 | 听悟直传 |
+| --- | --- |
+| ![新版待机](docs/screenshots/watch-v22-idle.png) | ![听悟直传成功](docs/screenshots/watch-v22-direct.png) |
+
+[2.0 的历史验证记录](docs/verification-v2.md)；当前直传状态以以上 2.2 说明为准。
+
+从源码构建：JDK 17+、Android SDK 35，在 `watchrec_app` 目录运行 `.\gradlew.bat -PwanluPreview=true :app:assembleDebug`。APK 输出到 `watchrec_app/app/build/outputs/apk/debug/app-debug.apk`。预览包可与原版并存；安装覆盖升级前请确认签名匹配并备份已有录音，不要为安装新版直接卸载旧版。
+
+验证后端：`python -m unittest discover -s pipeline/tests -v`。测试不调用真实付费 API。
+
+---
+
+## 旧版 1.x 电脑面板说明（兼容保留）
+
+下文截图和电脑中转操作属于旧版，当前操作以以上 2.2 说明为准。旧 PC 工具仍可独立使用。
 
 为 **OPPO Watch X3**（国行 ColorOS Watch / Android 底）开发的自用方案，同样适用于其他可 sideload APK 的 Android 手表。转写与纪要全部走**阿里云百炼 API**（paraformer-v2 + qwen-plus），本地不做任何模型推理。
 
