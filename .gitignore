@@ -27,3 +27,7 @@ dchk.sh
 ui_dump.xml
 .env
 cloud-data/
+.local/
+node_modules/
+dist-desktop/
+*.spec

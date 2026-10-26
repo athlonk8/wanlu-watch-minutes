@@ -89,6 +89,7 @@ select:focus,input:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(59,1
 .confirm{display:none;margin-top:12px;background:#fff8e6;border:1px solid #f5e0a3;border-radius:10px;
   padding:10px 14px;font-size:12.5px;color:#8a6d1a;align-items:center;gap:10px}
 .confirm.show{display:flex}
+.confirm.show{display:block}
 .confirm b{color:#70570f}
 
 /* ---- 任务 ---- */
@@ -101,6 +102,15 @@ select:focus,input:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(59,1
 .chip.running{background:#e5efff;color:var(--blue-d)}
 .chip.done{background:#e7f8f1;color:#0b7a5c}
 .chip.error{background:#fdeaea;color:#b91c1c}
+.chip.interrupted{background:#fff3d8;color:#8a6d1a}
+.job{flex-wrap:wrap}.job details{width:100%;font-size:12px;color:var(--sub)}
+.job pre{white-space:pre-wrap;overflow-wrap:anywhere;padding:8px;background:#f8fafc}
+.result-tools{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;align-items:center}
+.result-tools input{flex:1;min-width:150px}
+#panelError{background:#fff3d8;color:#8a6d1a;padding:10px 16px;border-radius:10px;margin-top:14px}
+@media(max-width:600px){.reswrap{grid-template-columns:1fr}.reslist{max-height:150px}
+.card h2{flex-wrap:wrap}.card h2 .right{margin-left:0}.factions{flex-wrap:wrap}
+header .wrap{padding:16px 20px}.pill{padding:6px 8px;font-size:11px}}
 
 /* ---- 结果 ---- */
 .reswrap{display:grid;grid-template-columns:210px 1fr;gap:14px;min-height:240px}
@@ -162,7 +172,7 @@ select:focus,input:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(59,1
   <div class="pill"><span class="dot" id="connDot"></span><span id="connTxt">未连接手表</span></div>
 </div></header>
 
-<div class="wrap"><div class="grid">
+<div class="wrap"><div id="panelError" role="status" hidden></div><div class="grid">
   <!-- 左列 -->
   <div>
     <div class="card">
@@ -179,6 +189,7 @@ select:focus,input:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(59,1
         <select id="devSel" title="选择手表设备"></select>
         <button class="btn btn-sm" id="btnRefresh">刷新</button>
       </div>
+      <div class="devrow"><select id="watchAppSel" title="选择腕录版本"></select></div>
       <div class="devrow">
         <input type="text" id="watchAddr" placeholder="无线ADB地址,如 192.168.1.8:5555" style="flex:1">
         <button class="btn btn-sm" id="btnConnect">连接</button>
@@ -196,6 +207,8 @@ select:focus,input:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(59,1
       <div class="flist" id="fileList"></div>
       <div class="confirm" id="confirmBar"></div>
       <div class="factions">
+        <button class="btn" id="btnImport">导入电脑音频</button>
+        <input type="file" id="audioInput" accept=".m4a,.mp3,.wav,.aac,.flac,.ogg,.opus,.amr,.wma,.mp4" multiple hidden>
         <button class="btn" id="btnPull">&#8681; 拉取选中到本地</button>
         <button class="btn btn-blue" id="btnUpload">&#9729; 上传百炼解析</button>
       </div>
@@ -204,6 +217,7 @@ select:focus,input:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(59,1
 
     <div class="card">
       <h2><span class="ico">&#9881;&#65039;</span>解析任务</h2>
+      <div class="hint" style="margin-bottom:8px">任务记录自动保存；面板重启后需手动重新提交。已有转写可仅重试纪要。</div>
       <div id="jobs"><div class="empty">暂无任务 — 勾选录音后点「上传百炼解析」</div></div>
     </div>
 
@@ -222,6 +236,12 @@ select:focus,input:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(59,1
             <button id="rtabM">会议纪要</button>
             <button id="rtabR">原始JSON</button>
           </div>
+          <div class="result-tools">
+            <input type="text" id="resultTitle" placeholder="会议主题（选填，用于生成纪要）" maxlength="500" aria-label="会议主题">
+            <button class="btn btn-sm" id="btnRegenerate">生成 / 重试纪要</button>
+            <button class="btn btn-sm" id="btnCopy">复制当前内容</button>
+          </div>
+          <div class="hint" style="margin-bottom:8px">生成 / 重试仅发送已保存的转写文本，使用已保存的纪要模型；会调用模型 API，原纪要在成功后更新。</div>
           <div class="rview" id="resView"><div class="empty">左侧选择一条结果</div></div>
         </div>
       </div>
@@ -347,6 +367,11 @@ let tab = 'watch';         // watch | local
 let sel = new Set();       // 当前 tab 勾选
 let resSel = null, resTab = 'transcript';
 let pendingUpload = null;
+let resultData = null, resultRequest = 0, resultRevision = '';
+const resultTitles = new Map();
+let pollTimer = null, polling = false, importing = false;
+function setHTML(id, content){const el=$(id);if(el._html!==content){el.innerHTML=content;el._html=content;}}
+const esc = value => String(value ?? '').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 const fmtSize = n => n >= 1048576 ? (n/1048576).toFixed(1)+' MB' : (n/1024).toFixed(0)+' KB';
 
@@ -359,13 +384,23 @@ function toast(msg, err){
 async function api(path, body){
   const r = await fetch(path, body ? {method:'POST',headers:{'Content-Type':'application/json'},
     body: JSON.stringify(body)} : undefined);
-  return r.json();
+  const data = await r.json();
+  if(!r.ok) throw new Error(data.msg || data.error || `请求失败 HTTP ${r.status}`);
+  return data;
 }
+window.addEventListener('unhandledrejection', e=>{ e.preventDefault(); toast(e.reason?.message || '操作失败，请检查面板连接', true); });
 
 /* ---------------- 状态轮询与渲染 ---------------- */
 async function poll(){
-  try{ S = await api('/api/state'); render(); }catch(e){ /* server restarting */ }
-  setTimeout(poll, 2500);
+  clearTimeout(pollTimer);
+  if(polling)return;
+  polling=true;
+  try{
+    S = await api('/api/state'); render(); $('panelError').hidden=true;
+    const revision=JSON.stringify(S.jobs.map(j=>[j.id,j.status]));
+    if(resSel && revision!==resultRevision){resultRevision=revision; await loadResult();}
+  }catch(e){$('panelError').textContent='无法连接电脑面板，请确认服务正在运行；页面会自动重连。';$('panelError').hidden=false;}
+  finally{polling=false;pollTimer=setTimeout(poll,2500);}
 }
 
 function render(){
@@ -373,17 +408,18 @@ function render(){
   // 连接状态
   $('connDot').className = 'dot' + (w.recording ? ' rec' : w.connected ? ' on' : '');
   $('connTxt').textContent = w.recording ? '正在录音…'
-    : w.connected ? `手表已连接 (${w.serial})`
-    : w.app_installed === false && w.connected ? '已连接,未装腕录' : '未连接手表';
+    : w.connected ? (w.app_installed ? `手表已连接 (${w.serial})` : '已连接，请安装腕录') : '未连接手表';
 
   // 设备下拉
   const ds = $('devSel');
   if (document.activeElement !== ds){
     const cur = c.watch_serial || (w.devices[0] || '');
-    ds.innerHTML = w.devices.length
-      ? w.devices.map(d=>`<option ${d===cur?'selected':''}>${d}</option>`).join('')
-      : '<option value="">未发现设备</option>';
+    setHTML('devSel', w.devices.length
+      ? w.devices.map(d=>`<option ${d===cur?'selected':''}>${esc(d)}</option>`).join('')
+      : '<option value="">未发现设备</option>');
   }
+  const apps=$('watchAppSel');
+  if(document.activeElement!==apps) setHTML('watchAppSel',(w.packages||[]).length ? w.packages.map(p=>`<option value="${esc(p)}" ${p===w.package?'selected':''}>${p.endsWith('.preview')?'腕录 2.2 预览版':'腕录原版'}</option>`).join('') : '<option value="">未检测到腕录应用</option>');
   if (document.activeElement !== $('watchAddr')) $('watchAddr').value = c.watch_addr || '';
 
   // 录音按钮状态
@@ -393,33 +429,40 @@ function render(){
 
   // 文件列表
   const list = tab === 'watch' ? w.files : S.inbox;
+  sel=new Set([...sel].filter(n=>list.some(f=>f.name===n)));
   $('tabWatch').classList.toggle('on', tab==='watch');
   $('tabLocal').classList.toggle('on', tab==='local');
   $('fileCount').textContent = list.length ? `${list.length} 个 · ${fmtSize(list.reduce((a,b)=>a+b.size,0))}` : '';
-  $('fileList').innerHTML = list.length ? list.map(f=>`
-    <label class="fitem"><input type="checkbox" data-n="${f.name}" ${sel.has(f.name)?'checked':''}>
+  setHTML('fileList', list.length ? list.map(f=>`
+    <label class="fitem"><input type="checkbox" data-n="${esc(f.name)}" ${sel.has(f.name)?'checked':''}>
       <span class="fico">${tab==='watch'?'&#8986;':'&#128190;'}</span>
-      <span class="fname" title="${f.name}">${f.name}</span>
+      <span class="fname" title="${esc(f.name)}">${esc(f.name)}</span>
       <span class="fsize">${fmtSize(f.size)}</span></label>`).join('')
-    : `<div class="empty">${tab==='watch' ? (w.connected?'手表上还没有录音':'先连接手表') : '本地还没有录音,先从手表拉取'}</div>`;
-  $('btnPull').disabled = tab!=='watch';
+    : `<div class="empty">${tab==='watch' ? (w.connected?'手表上还没有录音':'先连接手表') : '本地还没有录音，可从手表拉取或导入电脑音频'}</div>`);
+  $('btnPull').disabled = tab!=='watch' || !sel.size || w.recording;
+  $('btnImport').disabled = importing;
   $('btnUpload').disabled = !(tab==='local' && [...sel].some(n=>S.inbox.find(f=>f.name===n)));
 
   // 任务
   const jobs = S.jobs;
-  $('jobs').innerHTML = jobs.length ? jobs.map(j=>`
-    <div class="job"><span class="chip ${j.status}">${({queued:'排队',running:'进行中',done:'完成',error:'失败'})[j.status]||j.status}</span>
-      <span class="jname" title="${j.name}">${j.name}</span>
-      <span class="jlog">${(j.log[j.log.length-1]||'').replace(/</g,'&lt;')}</span></div>`).join('')
-    : '<div class="empty">暂无任务 — 勾选录音后点「上传百炼解析」</div>';
+  setHTML('jobs', jobs.length ? jobs.map(j=>`
+    <div class="job"><span class="chip ${esc(j.status)}">${({queued:'排队',running:'进行中',done:'完成',error:'失败',interrupted:'已中断'})[j.status]||esc(j.status)}</span>
+      <span class="jname" title="${esc(j.name)}">${j.kind==='minutes'?'纪要 · ':''}${esc(j.title||j.name)}</span>
+      <span class="jlog">${esc(j.log[j.log.length-1]||'等待处理')}</span>
+      ${S.results.some(r=>r.name===j.out)?`<button class="btn btn-sm" data-result="${esc(j.out)}">查看结果</button>`:''}
+      ${j.log.length?`<details><summary>处理详情</summary><pre>${esc(j.log.join('\n'))}</pre></details>`:''}</div>`).join('')
+    : '<div class="empty">暂无任务 — 勾选录音后点「上传百炼解析」</div>');
 
   // 结果列表
   const rl = $('resList');
-  rl.innerHTML = S.results.length ? S.results.map(r=>`
-    <div class="ritem ${r.name===resSel?'on':''}" data-n="${r.name}">${r.name}
+  setHTML('resList', S.results.length ? S.results.map(r=>`
+    <div class="ritem ${r.name===resSel?'on':''}" data-n="${esc(r.name)}">${esc(r.name)}
       <small>${r.has_minutes ? '转写 + 纪要' : '仅转写'}</small></div>`).join('')
-    : '<div class="empty">还没有解析结果</div>';
+    : '<div class="empty">还没有解析结果</div>');
   rl.querySelectorAll('.ritem').forEach(el=>el.onclick=()=>{resSel=el.dataset.n; loadResult();});
+  $('jobs').querySelectorAll('[data-result]').forEach(el=>el.onclick=()=>{resSel=el.dataset.result;resTab='minutes';loadResult();});
+  $('btnRegenerate').disabled=!resSel || S.jobs.some(j=>j.out===resSel&&['queued','running'].includes(j.status));
+  for(const id of ['btnCopy','btnDlMd','btnToPhone','btnToCloud']) $(id).disabled=!resSel;
   if (!resSel && S.results.length){ resSel = S.results[0].name; loadResult(); }
 }
 
@@ -462,14 +505,24 @@ function md2html(md){
 async function loadResult(){
   render();
   if(!resSel) return;
-  const d = await api('/api/result/'+encodeURIComponent(resSel));
+  const name=resSel, request=++resultRequest;
+  const titleField=$('resultTitle');
+  if(titleField.dataset.result!==name){
+    if(titleField.dataset.result)resultTitles.set(titleField.dataset.result,titleField.value);
+    titleField.dataset.result=name;
+    titleField.value=resultTitles.get(name) ?? S.jobs.find(j=>j.out===name&&j.title)?.title ?? '';
+  }
+  resultData=null;
+  const d = await api('/api/result/'+encodeURIComponent(name));
+  if(request!==resultRequest || name!==resSel)return;
+  resultData=d;
   const v = $('resView');
   $('rtabT').classList.toggle('on',resTab==='transcript');
   $('rtabM').classList.toggle('on',resTab==='minutes');
   $('rtabR').classList.toggle('on',resTab==='raw');
   if(resTab==='transcript') v.innerHTML = d.transcript ? `<div class="md">${md2html(d.transcript)}</div>` : '<div class="empty">无转写</div>';
   else if(resTab==='minutes') v.innerHTML = d.minutes ? `<div class="md">${md2html(d.minutes)}</div>` : '<div class="empty">未生成纪要(未开启或失败)</div>';
-  else v.innerHTML = d.raw ? `<pre>${d.raw.replace(/</g,'&lt;').slice(0,20000)}</pre>` : '<div class="empty">无</div>';
+  else v.innerHTML = d.raw ? `<pre>${esc(d.raw.slice(0,20000))}</pre>` : '<div class="empty">无</div>';
 }
 $('rtabT').onclick=()=>{resTab='transcript';loadResult()};
 $('rtabM').onclick=()=>{resTab='minutes';loadResult()};
@@ -497,15 +550,48 @@ $('btnConnect').onclick=async()=>{
 };
 
 $('devSel').onchange=()=>saveCfg({watch_serial:$('devSel').value});
+$('watchAppSel').onchange=async()=>{sel.clear();await saveCfg({watch_package:$('watchAppSel').value});await poll();};
+
+$('btnImport').onclick=()=>$('audioInput').click();
+$('audioInput').onchange=async()=>{
+  const files=[...$('audioInput').files]; if(!files.length)return;
+  importing=true;render(); const imported=[],failed=[];
+  try{
+    for(const file of files){
+      try{
+        if(!file.size || file.size>256*1024*1024)throw new Error(`${file.name}：文件为空或超过 256 MB`);
+        toast(`正在导入 ${file.name}…`);
+        const response=await fetch('/api/import',{method:'POST',headers:{'X-Filename':encodeURIComponent(file.name),'Content-Type':'application/octet-stream'},body:file});
+        const data=await response.json();
+        if(!response.ok||!data.ok)throw new Error(data.msg||'导入失败');
+        imported.push(data.name);
+      }catch(error){failed.push(error.message);}
+    }
+    tab='local';await poll();sel=new Set(imported);render();
+    toast(`已导入 ${imported.length} 个，仅保存到电脑`+(failed.length?`；${failed.length} 个失败：${failed[0]}`:''),!!failed.length);
+  }finally{importing=false;$('audioInput').value='';render();}
+};
+$('btnRegenerate').onclick=async()=>{
+  if(!resSel)return;
+  $('btnRegenerate').disabled=true;
+  try{
+    const r=await api('/api/regenerate',{name:resSel,title:$('resultTitle').value.trim()});
+    toast(r.msg,!r.ok); await poll();
+  }finally{render();}
+};
+$('btnCopy').onclick=async()=>{
+  const content=resultData?.[resTab];if(!content)return toast('当前没有可复制内容',true);
+  await navigator.clipboard.writeText(content);toast('已复制当前内容');
+};
 
 $('btnStart').onclick=async()=>{
   const r=await api('/api/rec',{action:'start'});
-  toast(r.ok?(r.recording?'手表开始录音 ✔':'指令已发,请确认手表'):'失败: '+(r.msg||''),r.ok);
+  toast(r.ok?(r.recording?'手表开始录音 ✔':'指令已发,请确认手表'):'失败: '+(r.msg||''),!r.ok);
   poll();
 };
 $('btnStop').onclick=async()=>{
   const r=await api('/api/rec',{action:'stop'});
-  toast(r.ok?(!r.recording?'已停止,录音已保存 ✔':'指令已发'):'失败: '+(r.msg||''),r.ok);
+  toast(r.ok?(!r.recording?'已停止,录音已保存 ✔':'指令已发'):'失败: '+(r.msg||''),!r.ok);
   setTimeout(poll,800);
 };
 
@@ -514,8 +600,8 @@ $('btnPull').onclick=async()=>{
   if(!names.length) return toast('请先勾选手表上的录音',1);
   toast(`拉取 ${names.length} 个…`);
   const r=await api('/api/pull',{files:names});
-  toast(r.ok?`已拉取 ${r.pulled.length} 个到本地 ✔`:'拉取失败',!r.ok);
-  if(r.ok){tab='local';sel.clear();render();}
+  toast(r.ok?`已拉取 ${r.pulled.length} 个到本地 ✔`:(r.msg||`已拉取 ${r.pulled?.length||0} 个，${r.errors?.length||0} 个失败`),!r.ok);
+  if(r.ok){tab='local';await poll();sel=new Set(r.pulled);render();}
 };
 
 $('btnUpload').onclick=()=>{
@@ -541,14 +627,14 @@ $('btnUpload').onclick=()=>{
       </div>
       <div class="field" style="margin:0">
         <label>转写模型</label>
-        <input type="text" id="pmAsr" value="${c.asr_model||'paraformer-v2'}">
+        <input type="text" id="pmAsr" value="${esc(c.asr_model||'paraformer-v2')}">
       </div>
       <div class="field" style="margin:0">
         <label>纪要模型 <span class="opt">${c.minutes_enabled?'':'(未开启纪要)'}</span></label>
-        <input type="text" id="pmLlm" value="${c.minutes_model||'qwen-plus'}">
+        <input type="text" id="pmLlm" value="${esc(c.minutes_model||'qwen-plus')}">
       </div>
-      <label class="switch" style="grid-column:1"><input type="checkbox" id="pmDiar"${c.diarization?' checked':''}> 说话人分离(区分不同发言人)</label>
-      <label class="switch" style="grid-column:2"><input type="checkbox" id="pmMin"${c.minutes_enabled?' checked':''}> 生成会议纪要(不勾则仅转写)</label>
+      <label style="grid-column:1"><input type="checkbox" id="pmDiar"${c.diarization?' checked':''}> 说话人分离</label>
+      <label style="grid-column:2"><input type="checkbox" id="pmMin"${c.minutes_enabled?' checked':''}> 生成会议纪要</label>
     </div>
     <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
       <button class="btn btn-sm" id="cancelUpload">取消</button>
@@ -561,6 +647,9 @@ $('btnUpload').onclick=()=>{
 };
 function hideConfirm(){pendingUpload=null;$('confirmBar').classList.remove('show')}
 async function doUpload(){
+  if(!pendingUpload)return;
+  $('doUpload').disabled=true;
+  try{
   const params={
     title:$('pmTitle').value.trim(),
     language_hints:$('pmLang').value,
@@ -570,9 +659,9 @@ async function doUpload(){
     minutes_enabled:$('pmMin').checked,
   };
   const r=await api('/api/submit',{files:pendingUpload,params});
-  hideConfirm();
-  if(r.ok){toast(`已加入队列 ${r.added.length} 个 ✔`); sel.clear(); render(); poll();}
+  if(r.ok){hideConfirm();toast(`已加入队列 ${r.added.length} 个 ✔`); sel.clear(); render(); poll();}
   else toast(r.msg||'提交失败',1);
+  }finally{if($('doUpload'))$('doUpload').disabled=false;}
 }
 
 /* ---------------- 设置 ---------------- */
@@ -596,10 +685,10 @@ render=function(){
   // 手机下拉(排除手表)
   const ps=$('phoneSel');
   if(document.activeElement!==ps){
-    const cands=(S.devices||[]).filter(d=>d!==S.config.watch_serial);
+    const cands=(S.devices||[]).filter(d=>d!==S.watch.serial);
     const cur=S.config.phone_serial||cands[0]||'';
-    ps.innerHTML=cands.length?cands.map(d=>`<option ${d===cur?'selected':''}>${d}</option>`).join('')
-      :'<option value="">未检测到手机</option>';
+    setHTML('phoneSel',cands.length?cands.map(d=>`<option ${d===cur?'selected':''}>${esc(d)}</option>`).join('')
+      :'<option value="">未检测到手机</option>');
   }
 };
 
@@ -620,6 +709,7 @@ async function saveCfg(extra){
     minutes_model:$('minModel').value,
     watch_serial: extra?.watch_serial ?? ($('devSel').value||''),
     watch_addr: extra?.watch_addr ?? $('watchAddr').value.trim(),
+    watch_package: extra?.watch_package ?? ($('watchAppSel').value||''),
     cloud_provider: $('cloudProvider').value,
     cloud_webhook: $('cloudWebhook').value.trim(),
     phone_serial: $('phoneSel').value||'',
