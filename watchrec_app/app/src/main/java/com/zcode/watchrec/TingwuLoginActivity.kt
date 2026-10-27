@@ -15,12 +15,14 @@ import android.os.Handler
 import android.os.Looper
 import android.webkit.CookieManager
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceError
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
 import kotlin.concurrent.thread
+import org.json.JSONTokener
 
 /** Official browser login, no JavaScript bridge and no credentials passed through intents. */
 class TingwuLoginActivity : Activity() {
@@ -29,6 +31,9 @@ class TingwuLoginActivity : Activity() {
     private val handler = Handler(Looper.getMainLooper())
     @Volatile private var checking = false
     private var closed = false
+    private var pageFailed = false
+    private var inspectingFallback = false
+    private var usedFallback = false
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -53,15 +58,26 @@ class TingwuLoginActivity : Activity() {
             webViewClient = object : WebViewClient() {
                 override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                     val uri = request.url
-                    return uri.scheme != "https" || uri.userInfo != null || (request.isForMainFrame && uri.host !in setOf("tingwu.aliyun.com", "account.aliyun.com", "login.aliyun.com", "passport.aliyun.com", "login.taobao.com"))
+                    return uri.scheme != "https" || uri.userInfo != null || (request.isForMainFrame && !TingwuLoginUrls.official(uri.toString()))
                 }
-                override fun onPageFinished(view: WebView, url: String) { checkSession(); handler.postDelayed({ showOfficialLogin() }, 1_500) }
+                override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
+                    pageFailed = false
+                    status.text = "正在加载官方登录…"
+                }
+                override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
+                    if (request.isForMainFrame) { pageFailed = true; status.text = "加载失败，点登录重试" }
+                }
+                override fun onPageFinished(view: WebView, url: String) {
+                    checkSession(); prepareQrLayout()
+                    if (!pageFailed) status.text = "官方登录 · 支付宝扫码"
+                    if (!pageFailed && Uri.parse(url).host == "tingwu.aliyun.com") handler.postDelayed({ if (!pageFailed) showOfficialLogin() }, 1_500)
+                }
             }
         }
         CookieManager.getInstance().apply { setAcceptCookie(true); setAcceptThirdPartyCookies(browser, true) }
         root.addView(browser, LinearLayout.LayoutParams(-1, 0, 1f))
         val buttons = LinearLayout(this).apply { gravity = android.view.Gravity.CENTER }
-        listOf("返回" to { finish() }, "登录" to { showOfficialLogin() }, "检查登录" to { checkSession() }).forEach { (label, action) ->
+        listOf("返回" to { finish() }, "登录" to { showOfficialLogin(retry = true) }, "检查登录" to { checkSession() }).forEach { (label, action) ->
             buttons.addView(Button(this).apply {
                 text = label; textSize = 11f; isAllCaps = false
                 setTextColor(Color.rgb(16, 61, 50)); setPadding(0, 0, 0, dp(3))
@@ -78,7 +94,7 @@ class TingwuLoginActivity : Activity() {
         root.addView(buttons, LinearLayout.LayoutParams(-1, dp(50)).apply { setMargins(dp(29), dp(4), dp(29), 0) })
         setContentView(root)
         browser.loadUrl("${TingwuSession.ORIGIN}/register/login?tw_redirect=${Uri.encode(TingwuSession.ORIGIN + "/home")}")
-        handler.postDelayed(object : Runnable { override fun run() { if (!closed) { prepareQrLayout(); checkSession(); handler.postDelayed(this, 4_000) } } }, 4_000)
+        handler.postDelayed(object : Runnable { override fun run() { if (!closed) { prepareQrLayout(); checkFallback(); checkSession(); handler.postDelayed(this, 4_000) } } }, 4_000)
     }
 
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
@@ -103,8 +119,17 @@ class TingwuLoginActivity : Activity() {
         }
     }
 
-    private fun showOfficialLogin() {
-        if (closed || TingwuSession.connected.value || Uri.parse(browser.url.orEmpty()).host != "tingwu.aliyun.com") return
+    private fun showOfficialLogin(retry: Boolean = false) {
+        if (closed || TingwuSession.connected.value) return
+        if (retry) usedFallback = false
+        val host = Uri.parse(browser.url.orEmpty()).host
+        if (pageFailed) {
+            if (retry) browser.loadUrl("${TingwuSession.ORIGIN}/register/login?tw_redirect=${Uri.encode(TingwuSession.ORIGIN + "/home")}")
+            return
+        }
+        if (host == "account.aliyun.com") { browser.reload(); return }
+        if (host != "tingwu.aliyun.com") return
+        checkFallback()
         browser.evaluateJavascript("""(function(){
           var nodes=document.querySelectorAll('button,a,span,div');
           for(var i=0;i<nodes.length;i++) if(nodes[i].textContent.trim()==='立即登录'){nodes[i].click();return true;}
@@ -113,8 +138,46 @@ class TingwuLoginActivity : Activity() {
         handler.postDelayed({ prepareQrLayout() }, 1_000)
     }
 
+    private fun checkFallback() {
+        if (closed || pageFailed || inspectingFallback || usedFallback || TingwuSession.connected.value || Uri.parse(browser.url.orEmpty()).host != "tingwu.aliyun.com") return
+        inspectingFallback = true
+        // Use the official error page's own SSO destination; never construct or log a ticket.
+        browser.evaluateJavascript("""(function(){
+          if(!document.body || document.body.innerText.indexOf('网络出现问题')<0)return null;
+          var links=document.querySelectorAll('a');
+          for(var i=0;i<links.length;i++)if(links[i].textContent.trim()==='前往登录页')return links[i].href;
+          return null;
+        })()""".trimIndent()) { result ->
+            inspectingFallback = false
+            if (!closed) {
+                val target = TingwuLoginUrls.fallback(runCatching { JSONTokener(result).nextValue() as? String }.getOrNull())
+                if (target != null && !usedFallback) {
+                    usedFallback = true
+                    status.text = "正在切换官方登录页…"
+                    browser.loadUrl(target)
+                }
+            }
+        }
+    }
+
     private fun prepareQrLayout() {
-        if (closed || Uri.parse(browser.url.orEmpty()).host != "tingwu.aliyun.com") return
+        if (closed) return
+        val host = Uri.parse(browser.url.orEmpty()).host
+        if (host == "account.aliyun.com") {
+            // Preserve the official live QR and callbacks. Fit its existing container
+            // into the WebView's visual viewport, which is much shorter on a watch.
+            browser.evaluateJavascript("""(function(){
+              var q=document.querySelector('.qrcode-wrap');if(!q)return;
+              var v=window.visualViewport||{width:innerWidth,height:innerHeight,offsetLeft:0,offsetTop:0};
+              var s=Math.min((v.width-20)/144,(v.height-12)/144,1.25);if(s<=0)return;
+              var css=document.getElementById('wanlu-account-qr-layout');
+              if(!css){css=document.createElement('style');css.id='wanlu-account-qr-layout';document.head.appendChild(css);}
+              css.textContent='.login-core{position:fixed!important;left:0!important;top:0!important;width:100vw!important;height:100vh!important;margin:0!important;z-index:20!important;background:white!important}.login-core,.login-core *{will-change:auto!important}';
+              q.style.cssText='position:fixed!important;left:'+(v.offsetLeft+(v.width-144*s)/2)+'px!important;top:'+(v.offsetTop+6)+'px!important;width:144px!important;height:144px!important;margin:0!important;transform:scale('+s+')!important;transform-origin:0 0!important;z-index:1!important;background:white!important';
+            })()""".trimIndent(), null)
+            return
+        }
+        if (host != "tingwu.aliyun.com") return
         // Crop the official embedded desktop login to its QR panel; don't replace its login flow.
         browser.evaluateJavascript("""(function(){
           if(document.getElementById('wanlu-qr-layout'))return;

@@ -281,7 +281,7 @@ fun PhoneTransferPage(onPick: () -> Unit = {}) {
             if (share.url.isBlank()) GlossySecondaryButton(onClick = { ctx.startActivity(Intent(Settings.ACTION_WIFI_SETTINGS)) }) { Text("连接 Wi-Fi", fontSize = 11.sp) }
             GlossySecondaryButton(onClick = { ctx.startService(Intent(ctx, PhoneTransferService::class.java).setAction(PhoneTransferService.STOP)) }) { Text("结束传输", color = Red, fontSize = 12.sp) }
         }
-        Text("腕录 2.2.2 · 纪要在听悟查看", color = Muted, fontSize = 9.sp, modifier = Modifier.padding(top = 16.dp))
+        Text("腕录 2.2.3 · 纪要在听悟查看", color = Muted, fontSize = 9.sp, modifier = Modifier.padding(top = 16.dp))
     }
 }
 
