@@ -10,11 +10,11 @@
 
 [下载手表 2.2.2 安装包](https://github.com/athlonk8/wanlu-watch-minutes/releases/tag/watch-v2.2.2)。同签名覆盖安装保留原录音；旧预览包签名不同，不要为更换图标或按钮而直接卸载它。
 
-以下为 466 × 466 的 Android 原生布局渲染图，使用合成静音文件；录音状态仅展示按钮与计时样式，未启动麦克风或上传。它们不代替真机功能验收，详见 [截图说明](docs/screenshots/watch-v222/README.md)。
+待机画面为 2026-10-27 的 OWW261 真机截图：已覆盖安装 2.2.2，6 段原录音升级前后 SHA-256 一致。其余图片为 466 × 466 的 Android 原生布局渲染，使用合成静音文件；录音状态仅展示按钮与计时样式，未启动麦克风或上传。详见 [截图说明](docs/screenshots/watch-v222/README.md)。
 
-| 开始录音 | 结束并保存（状态示意） |
+| 开始录音（真机） | 结束并保存（状态示意） |
 | --- | --- |
-| ![薄荷绿立体录音按钮](docs/screenshots/watch-v222/idle.png) | ![珊瑚色立体结束按钮](docs/screenshots/watch-v222/recording-demo.png) |
+| ![OWW261 真机上的立体录音按钮](docs/screenshots/watch-v222/idle-device.png) | ![珊瑚色立体结束按钮](docs/screenshots/watch-v222/recording-demo.png) |
 
 | 文件操作 | 听悟扫码入口 |
 | --- | --- |
