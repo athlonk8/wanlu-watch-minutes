@@ -26,6 +26,7 @@ import java.util.Locale
 
 object RecorderState {
     val isRecording = MutableStateFlow(false)
+    val recordingQuality = MutableStateFlow<RecordingQuality?>(null)
     val startedAt = MutableStateFlow(0L)
     val error = MutableStateFlow<String?>(null)
     val filesSummary = MutableStateFlow("")
@@ -102,6 +103,8 @@ class RecorderService : Service() {
         val dir = filesDir
         val name = "REC_" + SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date()) + ".m4a"
         val file = File(dir, name)
+        // Snapshot once: changing a preference cannot reconfigure an active recording.
+        val quality = RecordingSettings.quality(applicationContext)
 
         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
         wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "watchrec:mic").apply {
@@ -116,7 +119,7 @@ class RecorderService : Service() {
             r.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
             r.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
             r.setAudioSamplingRate(44100)
-            r.setAudioEncodingBitRate(64000)
+            r.setAudioEncodingBitRate(quality.bitsPerSecond)
             r.setAudioChannels(1)
             r.setMaxDuration(MAX_MS)
             r.setOnInfoListener { _, what, _ ->
@@ -134,7 +137,9 @@ class RecorderService : Service() {
         } catch (e: Exception) {
             r.release()
             wakeLock?.release(); wakeLock = null
-            RecorderState.error.value = "无法启动录音: ${e.message}"
+            file.delete()
+            RecorderState.recordingQuality.value = null
+            RecorderState.error.value = "无法启动录音（${quality.kbps} kbps）: ${e.message}"
             ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
             stopSelf()
             return
@@ -144,6 +149,7 @@ class RecorderService : Service() {
         outFile = file
         RecorderState.error.value = null
         RecorderState.startedAt.value = SystemClock.elapsedRealtime()
+        RecorderState.recordingQuality.value = quality
         RecorderState.isRecording.value = true
         buzz(60)
         goForeground(running = true)
@@ -172,6 +178,7 @@ class RecorderService : Service() {
             }
         }
         outFile = null
+        RecorderState.recordingQuality.value = null
     }
 
     override fun onDestroy() {
