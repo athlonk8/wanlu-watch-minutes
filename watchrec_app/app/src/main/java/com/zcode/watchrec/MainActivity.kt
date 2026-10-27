@@ -10,6 +10,7 @@ import android.os.SystemClock
 import android.graphics.Bitmap
 import android.provider.Settings
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -45,6 +46,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -137,12 +139,16 @@ fun RecordPage() {
     val started by RecorderState.startedAt.collectAsState()
     val error by RecorderState.error.collectAsState()
     val summary by RecorderState.filesSummary.collectAsState()
+    val activeQuality by RecorderState.recordingQuality.collectAsState()
+    var quality by remember { mutableStateOf(RecordingSettings.quality(ctx)) }
+    var choosingQuality by remember { mutableStateOf(false) }
     var tick by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
         if (result[Manifest.permission.RECORD_AUDIO] == true) startRecording(ctx)
         else RecorderState.error.value = "需要麦克风权限才能录音"
     }
     LaunchedEffect(recording) {
+        if (recording) choosingQuality = false
         RecorderState.refreshFiles(ctx)
         while (recording) { tick = SystemClock.elapsedRealtime(); delay(250) }
     }
@@ -155,12 +161,14 @@ fun RecordPage() {
             drawCircle(Muted.copy(alpha = .12f), style = Stroke(2.dp.toPx()))
             if (recording) drawArc(Red, -90f, (seconds % 60) * 6f, false, style = Stroke(3.dp.toPx(), cap = StrokeCap.Round))
         }
-        Column(Modifier.fillMaxSize().padding(top = if (compact) 22.dp else 27.dp, bottom = 30.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.SpaceEvenly) {
+        Column(Modifier.fillMaxSize().padding(top = if (compact) 16.dp else 19.dp, bottom = 26.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.SpaceEvenly) {
             Text(if (recording) "●  正在录音" else "腕录", color = if (recording) Red else Mint, fontSize = 12.sp, fontWeight = FontWeight.Medium)
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(if (seconds >= 3600) "%d:%02d:%02d".format(seconds / 3600, seconds / 60 % 60, seconds % 60) else "%02d:%02d".format(seconds / 60, seconds % 60),
                     color = Color.White, fontSize = if (compact) 30.sp else 36.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Medium)
-                Text(if (recording) "息屏也会继续录音" else summary.ifEmpty { "随时记录重要的话" }, color = Muted, fontSize = 10.sp)
+                Text(error?.take(32) ?: if (recording) "息屏也会继续录音" else summary.ifEmpty { "随时记录重要的话" },
+                    color = if (error == null) Muted else Red, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(horizontal = 25.dp))
             }
             GlossyButton(onClick = {
                 if (recording) ctx.startService(Intent(ctx, RecorderService::class.java).setAction(RecorderService.ACTION_STOP))
@@ -181,7 +189,53 @@ fun RecordPage() {
                     Text(if (recording) "保存到手表" else "记录这一刻", fontSize = 9.sp)
                 }
             }
-            Text(error?.take(24) ?: if (recording) "轻点结束并保存" else "轻点录音 · 左滑文件", color = if (error == null) Muted else Red, fontSize = 10.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 35.dp))
+            val shownQuality = if (recording) activeQuality ?: quality else quality
+            GlossySecondaryButton(onClick = { choosingQuality = true }, enabled = !recording,
+                modifier = Modifier.width(140.dp).height(32.dp).semantics {
+                    contentDescription = if (recording) "本段录音音质 ${shownQuality.kbps} kbps，录音期间不可调整" else "录音音质 ${shownQuality.kbps} kbps，点按设置"
+                }, contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)) {
+                Text(if (recording) "音质 ${shownQuality.kbps} kbps · 已锁定" else "音质 ${shownQuality.kbps} kbps · 调整", fontSize = 10.sp)
+            }
+        }
+        if (choosingQuality) {
+            BackHandler { choosingQuality = false }
+            RecordingQualityPicker(quality = quality, onBack = { choosingQuality = false }, onSelect = { picked ->
+                if (!RecorderState.isRecording.value) {
+                    if (RecordingSettings.select(ctx, picked)) {
+                        quality = picked
+                        choosingQuality = false
+                    } else {
+                        choosingQuality = false
+                        RecorderState.error.value = "音质未保存，请重试"
+                    }
+                }
+            })
+        }
+    }
+}
+
+@Composable
+private fun RecordingQualityPicker(quality: RecordingQuality, onBack: () -> Unit, onSelect: (RecordingQuality) -> Unit) {
+    Column(Modifier.fillMaxSize().background(Ink).verticalScroll(rememberScrollState())
+        .padding(start = 32.dp, end = 32.dp, top = 17.dp, bottom = 26.dp),
+        horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(Modifier.fillMaxWidth().height(28.dp).clickable(onClick = onBack), contentAlignment = Alignment.Center) {
+            Text("‹  音质设置", color = Mint, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+        }
+        Spacer(Modifier.height(6.dp))
+        RecordingQuality.entries.forEachIndexed { index, option ->
+            if (index > 0) Spacer(Modifier.height(4.dp))
+            GlossyButton(onClick = { onSelect(option) }, modifier = Modifier.fillMaxWidth().height(48.dp).semantics {
+                contentDescription = "${option.title} ${option.kbps} kbps${if (option == quality) "，当前选择" else ""}"
+            }, tone = if (option == quality) ButtonTone.Mint else ButtonTone.Slate,
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) {
+                Column(Modifier.weight(1f)) {
+                    Text("${option.title}  ${option.kbps} kbps", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Text("约 ${option.megabytesPerHour} MB/小时${if (option == RecordingQuality.HIGH) " · 默认" else ""}",
+                        fontSize = 9.sp, color = LocalContentColor.current.copy(alpha = .8f))
+                }
+                if (option == quality) Text("✓", fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            }
         }
     }
 }
@@ -281,7 +335,7 @@ fun PhoneTransferPage(onPick: () -> Unit = {}) {
             if (share.url.isBlank()) GlossySecondaryButton(onClick = { ctx.startActivity(Intent(Settings.ACTION_WIFI_SETTINGS)) }) { Text("连接 Wi-Fi", fontSize = 11.sp) }
             GlossySecondaryButton(onClick = { ctx.startService(Intent(ctx, PhoneTransferService::class.java).setAction(PhoneTransferService.STOP)) }) { Text("结束传输", color = Red, fontSize = 12.sp) }
         }
-        Text("腕录 2.2.3 · 纪要在听悟查看", color = Muted, fontSize = 9.sp, modifier = Modifier.padding(top = 16.dp))
+        Text("腕录 2.2.4 · 纪要在听悟查看", color = Muted, fontSize = 9.sp, modifier = Modifier.padding(top = 16.dp))
     }
 }
 
