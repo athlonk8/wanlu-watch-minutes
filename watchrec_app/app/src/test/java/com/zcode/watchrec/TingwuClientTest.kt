@@ -9,8 +9,35 @@ import java.io.File
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.UnknownHostException
+import java.net.SocketTimeoutException
 
 class TingwuClientTest {
+    @Test fun failureBeforeOutputStreamIsSafeToRetryWithoutCreatingAnotherRecord() {
+        val client = TingwuClient({ "synthetic" }, open = { url -> object : HttpURLConnection(url) {
+            override fun connect() {}
+            override fun disconnect() {}
+            override fun usingProxy() = false
+            override fun getOutputStream(): java.io.OutputStream { throw UnknownHostException("private-upload-url") }
+        } })
+        val failure = assertThrows(TingwuFailure::class.java) { client.api("generatePutLink") }
+        assertTrue(failure.requestNotSent)
+        assertTrue(failure.retryable)
+        assertFalse(failure.message.orEmpty().contains("private"))
+    }
+
+    @Test fun timeoutReadingCreateResponseIsUncertainAndMustNotReplayCreation() {
+        val client = TingwuClient({ "synthetic" }, open = { url -> object : HttpURLConnection(url) {
+            override fun connect() {}
+            override fun disconnect() {}
+            override fun usingProxy() = false
+            override fun getOutputStream() = ByteArrayOutputStream()
+            override fun getResponseCode(): Int { throw SocketTimeoutException() }
+        } })
+        val failure = assertThrows(TingwuFailure::class.java) { client.api("generatePutLink") }
+        assertFalse(failure.requestNotSent)
+        assertTrue(failure.retryable)
+    }
     private class Connection(url: URL, val code: Int = 200, val body: String = "{\"code\":\"0\",\"data\":{}}") : HttpURLConnection(url) {
         val sent = ByteArrayOutputStream()
         var released = false

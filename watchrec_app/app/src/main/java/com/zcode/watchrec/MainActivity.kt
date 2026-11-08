@@ -95,7 +95,12 @@ class MainActivity : ComponentActivity() {
         registerReceiver(chargingReceiver, android.content.IntentFilter(Intent.ACTION_BATTERY_CHANGED))
         updateDebugDisplay()
         kotlin.concurrent.thread(name = "tingwu-session", isDaemon = true) {
-            runCatching { if (TingwuSession.verify()) TingwuUploads.refresh(applicationContext) }
+            runCatching {
+                if (TingwuSession.verify()) {
+                    TingwuUploads.refresh(applicationContext)
+                    TingwuUploads.resumeQueued(applicationContext)
+                }
+            }
         }
     }
     override fun onPause() {
@@ -335,7 +340,7 @@ fun PhoneTransferPage(onPick: () -> Unit = {}) {
             if (share.url.isBlank()) GlossySecondaryButton(onClick = { ctx.startActivity(Intent(Settings.ACTION_WIFI_SETTINGS)) }) { Text("连接 Wi-Fi", fontSize = 11.sp) }
             GlossySecondaryButton(onClick = { ctx.startService(Intent(ctx, PhoneTransferService::class.java).setAction(PhoneTransferService.STOP)) }) { Text("结束传输", color = Red, fontSize = 12.sp) }
         }
-        Text("腕录 2.2.4 · 纪要在听悟查看", color = Muted, fontSize = 9.sp, modifier = Modifier.padding(top = 16.dp))
+        Text("腕录 2.2.5 · 纪要在听悟查看", color = Muted, fontSize = 9.sp, modifier = Modifier.padding(top = 16.dp))
     }
 }
 
@@ -380,6 +385,7 @@ private fun BluetoothTransferContent(selected: String, onPick: () -> Unit) {
 private fun TingwuTransferContent(selected: String, onPick: () -> Unit) {
     val ctx = LocalContext.current
     val connected by TingwuSession.connected.collectAsState()
+    val sessionProblem by TingwuSession.problem.collectAsState()
     val work by TingwuUploads.states(ctx).collectAsState(initial = emptyList())
     val states by TingwuUploads.status.collectAsState()
     var automatic by remember { mutableStateOf(TingwuUploads.automatic(ctx)) }
@@ -388,7 +394,9 @@ private fun TingwuTransferContent(selected: String, onPick: () -> Unit) {
     val busy = jobs.any { !it.state.isFinished }
     val state = states[selected]
     Text(if (connected) "● 听悟账号已连接" else "连接后直接上传到你的听悟", color = if (connected) Mint else Muted, fontSize = 10.sp, modifier = Modifier.padding(top = 8.dp))
+    if (sessionProblem.isNotBlank()) Text(sessionProblem, color = Red, fontSize = 10.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 8.dp))
     if (!connected) {
+        if (state?.message?.isNotBlank() == true) Text(state.message, color = Muted, fontSize = 10.sp, textAlign = TextAlign.Center)
         Text("手机扫码，连接现有账号", color = Muted, fontSize = 11.sp,
             textAlign = TextAlign.Center, modifier = Modifier.padding(top = 12.dp))
         GlossyButton(onClick = { ctx.startActivity(Intent(ctx, TingwuLoginActivity::class.java)) },
@@ -397,6 +405,7 @@ private fun TingwuTransferContent(selected: String, onPick: () -> Unit) {
         }
         Text("纪要直接在听悟查看", color = Muted, fontSize = 10.sp,
             textAlign = TextAlign.Center, modifier = Modifier.padding(top = 12.dp, bottom = 10.dp))
+        GlossySecondaryButton(onClick = { ctx.startActivity(Intent(ctx, TingwuNetworkActivity::class.java)) }) { Text("共享网络检查", fontSize = 11.sp) }
         if (busy) GlossySecondaryButton(onClick = {
             jobs.filter { !it.state.isFinished }.forEach { WorkManager.getInstance(ctx).cancelWorkById(it.id) }
         }, modifier = Modifier.padding(top = 8.dp)) { Text("取消上传", color = Red, fontSize = 12.sp) }
@@ -426,4 +435,5 @@ private fun TingwuTransferContent(selected: String, onPick: () -> Unit) {
             colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFFE6FFF1), checkedTrackColor = Color(0xFF42B990)))
     }
     if (connected) GlossySecondaryButton(onClick = { ctx.startActivity(Intent(ctx, TingwuLoginActivity::class.java)) }) { Text("重新连接听悟", fontSize = 10.sp) }
+    GlossySecondaryButton(onClick = { ctx.startActivity(Intent(ctx, TingwuNetworkActivity::class.java)) }) { Text("共享网络检查", fontSize = 11.sp) }
 }

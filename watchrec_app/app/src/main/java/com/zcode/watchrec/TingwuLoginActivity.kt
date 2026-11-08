@@ -34,6 +34,8 @@ class TingwuLoginActivity : Activity() {
     private var pageFailed = false
     private var inspectingFallback = false
     private var usedFallback = false
+    private var failedUrl: String? = null
+    private var foreground = false
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -62,10 +64,28 @@ class TingwuLoginActivity : Activity() {
                 }
                 override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
                     pageFailed = false
+                    failedUrl = null
                     status.text = "正在加载官方登录…"
                 }
                 override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
-                    if (request.isForMainFrame) { pageFailed = true; status.text = "加载失败，点登录重试" }
+                    if (request.isForMainFrame) {
+                        pageFailed = true
+                        failedUrl = request.url.toString().takeIf(TingwuLoginUrls::official)
+                        status.text = when (error.errorCode) {
+                            ERROR_HOST_LOOKUP -> "域名解析失败 · 检查共享网络"
+                            ERROR_TIMEOUT -> "连接超时 · 点登录重试"
+                            ERROR_CONNECT, ERROR_IO -> "共享网络无法连接登录页"
+                            ERROR_FAILED_SSL_HANDSHAKE -> "安全连接失败 · 检查时间与网络"
+                            else -> "登录页加载失败 · 点登录重试"
+                        }
+                    }
+                }
+                override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, response: android.webkit.WebResourceResponse) {
+                    if (request.isForMainFrame) {
+                        pageFailed = true
+                        failedUrl = request.url.toString().takeIf(TingwuLoginUrls::official)
+                        status.text = "登录服务异常（${response.statusCode}）"
+                    }
                 }
                 override fun onPageFinished(view: WebView, url: String) {
                     checkSession(); prepareQrLayout()
@@ -77,7 +97,9 @@ class TingwuLoginActivity : Activity() {
         CookieManager.getInstance().apply { setAcceptCookie(true); setAcceptThirdPartyCookies(browser, true) }
         root.addView(browser, LinearLayout.LayoutParams(-1, 0, 1f))
         val buttons = LinearLayout(this).apply { gravity = android.view.Gravity.CENTER }
-        listOf("返回" to { finish() }, "登录" to { showOfficialLogin(retry = true) }, "检查登录" to { checkSession() }).forEach { (label, action) ->
+        listOf("返回" to { finish() }, "登录" to { showOfficialLogin(retry = true) }, "查网络" to {
+            startActivity(android.content.Intent(this, TingwuNetworkActivity::class.java))
+        }).forEach { (label, action) ->
             buttons.addView(Button(this).apply {
                 text = label; textSize = 11f; isAllCaps = false
                 setTextColor(Color.rgb(16, 61, 50)); setPadding(0, 0, 0, dp(3))
@@ -94,7 +116,7 @@ class TingwuLoginActivity : Activity() {
         root.addView(buttons, LinearLayout.LayoutParams(-1, dp(50)).apply { setMargins(dp(29), dp(4), dp(29), 0) })
         setContentView(root)
         browser.loadUrl("${TingwuSession.ORIGIN}/register/login?tw_redirect=${Uri.encode(TingwuSession.ORIGIN + "/home")}")
-        handler.postDelayed(object : Runnable { override fun run() { if (!closed) { prepareQrLayout(); checkFallback(); checkSession(); handler.postDelayed(this, 4_000) } } }, 4_000)
+        handler.postDelayed(object : Runnable { override fun run() { if (!closed) { if (foreground) { prepareQrLayout(); checkFallback(); checkSession() }; handler.postDelayed(this, 4_000) } } }, 4_000)
     }
 
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
@@ -120,11 +142,11 @@ class TingwuLoginActivity : Activity() {
     }
 
     private fun showOfficialLogin(retry: Boolean = false) {
-        if (closed || TingwuSession.connected.value) return
+        if (closed || !foreground || TingwuSession.connected.value) return
         if (retry) usedFallback = false
         val host = Uri.parse(browser.url.orEmpty()).host
         if (pageFailed) {
-            if (retry) browser.loadUrl("${TingwuSession.ORIGIN}/register/login?tw_redirect=${Uri.encode(TingwuSession.ORIGIN + "/home")}")
+            if (retry) browser.loadUrl(failedUrl ?: "${TingwuSession.ORIGIN}/register/login?tw_redirect=${Uri.encode(TingwuSession.ORIGIN + "/home")}")
             return
         }
         if (host == "account.aliyun.com") { browser.reload(); return }
@@ -139,7 +161,7 @@ class TingwuLoginActivity : Activity() {
     }
 
     private fun checkFallback() {
-        if (closed || pageFailed || inspectingFallback || usedFallback || TingwuSession.connected.value || Uri.parse(browser.url.orEmpty()).host != "tingwu.aliyun.com") return
+        if (closed || !foreground || pageFailed || inspectingFallback || usedFallback || TingwuSession.connected.value || Uri.parse(browser.url.orEmpty()).host != "tingwu.aliyun.com") return
         inspectingFallback = true
         // Use the official error page's own SSO destination; never construct or log a ticket.
         browser.evaluateJavascript("""(function(){
@@ -188,7 +210,7 @@ class TingwuLoginActivity : Activity() {
     }
 
     private fun checkSession() {
-        if (checking || closed) return
+        if (checking || closed || !foreground) return
         checking = true
         thread(name = "tingwu-login-check", isDaemon = true) {
             val verified = runCatching { TingwuSession.verify() }.getOrDefault(false)
@@ -198,6 +220,9 @@ class TingwuLoginActivity : Activity() {
             }
         }
     }
+
+    override fun onResume() { super.onResume(); foreground = true }
+    override fun onPause() { foreground = false; super.onPause() }
 
     override fun onDestroy() {
         closed = true

@@ -8,6 +8,11 @@ import androidx.work.WorkManager
 import androidx.work.Worker
 import androidx.work.WorkerFactory
 import androidx.work.WorkerParameters
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.Constraints
+import androidx.work.NetworkType
+import androidx.work.ExistingWorkPolicy
+import androidx.work.workDataOf
 import androidx.work.testing.SynchronousExecutor
 import androidx.work.testing.WorkManagerTestInitHelper
 import org.junit.Assert.*
@@ -18,6 +23,7 @@ import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import java.io.File
+import org.json.JSONObject
 
 /** Drives the real recording-finalization callback using synthetic files, never a microphone or cloud call. */
 @RunWith(RobolectricTestRunner::class)
@@ -80,5 +86,35 @@ class AutomaticUploadTest {
         stop(file)
         assertTrue(WorkManager.getInstance(context).getWorkInfosByTag(TingwuUploads.TAG).get().isEmpty())
         assertTrue(file.isFile)
+    }
+
+    @Test fun phoneSharedNetworkCanAttemptUploadWithoutSystemValidation() {
+        val file = File(context.filesDir, "REC_shared_network.m4a").apply { writeText("synthetic") }
+        TingwuUploads.enqueue(context, file.name)
+        // No call to setAllConstraintsMet: the endpoint check runs even when the
+        // scheduler's test network has not been declared connected/validated.
+        assertEquals(listOf(file.name), completed)
+    }
+
+    @Test fun upgradingAnOldWaitingUploadRetainsItsWorkIdAndCloudRecord() {
+        val file = File(context.filesDir, "REC_waiting.m4a").apply { writeText("synthetic") }
+        val account = TingwuSession.accountKey.value
+        val key = TingwuUploads.key(account, file.name, file.length(), file.lastModified())
+        val job = JSONObject().put("account", account).put("name", file.name)
+            .put("phase", "uploading").put("transId", "existing-cloud-record")
+        TingwuUploads.save(context, key, job)
+        val old = OneTimeWorkRequestBuilder<TingwuUploadWorker>()
+            .setInputData(workDataOf("name" to file.name, "account" to account, "key" to key))
+            .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+            .addTag(TingwuUploads.TAG).addTag("name:${file.name}").build()
+        val manager = WorkManager.getInstance(context)
+        manager.enqueueUniqueWork("tingwu/$key", ExistingWorkPolicy.KEEP, old).result.get()
+        assertTrue(completed.isEmpty())
+        TingwuUploads.resumeQueued(context)
+        val work = manager.getWorkInfosForUniqueWork("tingwu/$key").get().single()
+        assertEquals(old.id, work.id)
+        assertEquals(NetworkType.NOT_REQUIRED, work.constraints.requiredNetworkType)
+        assertEquals(listOf(file.name), completed)
+        assertEquals("existing-cloud-record", TingwuUploads.read(context, key).getString("transId"))
     }
 }
