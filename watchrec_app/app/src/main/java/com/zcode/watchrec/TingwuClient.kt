@@ -9,8 +9,15 @@ import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URL
+import java.net.URLDecoder
 
-class TingwuFailure(message: String, val loginRequired: Boolean = false, val serviceCode: String = "") : IOException(message)
+class TingwuFailure(
+    message: String,
+    val loginRequired: Boolean = false,
+    val serviceCode: String = "",
+    val requestNotSent: Boolean = false,
+    val retryable: Boolean = false
+) : IOException(message)
 
 /** Observed website protocol, deliberately separate from the Alibaba developer API. */
 object TingwuProtocol {
@@ -37,6 +44,15 @@ object TingwuProtocol {
             output.write(buffer, 0, n)
         }
         return try { JSONObject(output.toString("UTF-8")) } catch (_: Exception) { throw TingwuFailure("听悟响应格式已变化，请重新登录后重试") }
+    }
+
+    fun checkUploadExpiry(destination: URL, nowMillis: Long = System.currentTimeMillis()) {
+        val values = destination.query.orEmpty().split('&').map { it.split('=', limit = 2) }
+            .filter { it.size == 2 && runCatching { URLDecoder.decode(it[0], "UTF-8") == "Expires" }.getOrDefault(false) }
+        if (values.isEmpty()) return
+        val expires = values.singleOrNull()?.get(1)?.let { runCatching { URLDecoder.decode(it, "UTF-8").toLong() }.getOrNull() }
+            ?: throw TingwuFailure("听悟上传地址的有效期无效")
+        if (expires <= nowMillis / 1000) throw TingwuFailure("上传地址已过期，请在手机检查该记录后重新上传")
     }
 
     fun data(response: JSONObject): JSONObject {
@@ -83,6 +99,9 @@ class TingwuClient(
             if (failure.loginRequired) throw failure
             val after = runCatching { status() }.getOrDefault(-1)
             if (after in 0..2) return after
+            // Observed on device: generic -1 can precede successful processing.
+            // Poll the same record later instead of falsely failing or resubmitting.
+            if (failure.serviceCode == "-1") throw TingwuFailure("录音已上传，等待听悟确认处理", serviceCode = "-1", retryable = true)
             throw failure
         }
     }
@@ -92,11 +111,13 @@ class TingwuClient(
         if (stopped()) throw TingwuFailure("上传已取消，录音保留在手表")
         val session = cookie()
         if (session.isBlank()) throw TingwuFailure("请先连接听悟账号", true)
-        val connection = open(URL("${TingwuProtocol.ORIGIN}/api/trans/request?$action&c=web"))
+        val connection = try { open(URL("${TingwuProtocol.ORIGIN}/api/trans/request?$action&c=web")) }
+            catch (error: IOException) { throw TingwuNetworkErrors.failure(error, requestNotSent = true) }
         active(connection)
+        var bodyMayHaveBeenSent = false
         try {
             connection.instanceFollowRedirects = false
-            connection.connectTimeout = 15_000; connection.readTimeout = 30_000
+            connection.connectTimeout = 30_000; connection.readTimeout = 60_000
             connection.requestMethod = "POST"; connection.doOutput = true
             connection.setRequestProperty("Cookie", session)
             connection.setRequestProperty("User-Agent", TingwuProtocol.USER_AGENT)
@@ -106,26 +127,29 @@ class TingwuClient(
             connection.setRequestProperty("Content-Type", "application/json;charset=UTF-8")
             val bytes = JSONObject(payload.toString()).put("action", action).put("version", "1.0").toString().toByteArray(Charsets.UTF_8)
             connection.setFixedLengthStreamingMode(bytes.size)
-            connection.outputStream.use { it.write(bytes) }
+            connection.outputStream.use { bodyMayHaveBeenSent = true; it.write(bytes) }
             val status = connection.responseCode
             if (status == 401 || status in 300..399) throw TingwuFailure("请重新扫码连接听悟账号", true)
-            if (status != 200) throw TingwuFailure("听悟暂时不可用（$status），录音仍保留")
+            if (status != 200) throw TingwuFailure("听悟暂时不可用（$status），录音仍保留", retryable = status == 429 || status in 500..599)
             val response = connection.inputStream.use(TingwuProtocol::readJson)
             TingwuProtocol.data(response)
             return response
-        } finally { connection.disconnect(); active(null) }
+        } catch (failure: TingwuFailure) { throw failure }
+        catch (error: IOException) { throw TingwuNetworkErrors.failure(error, requestNotSent = !bodyMayHaveBeenSent) }
+        finally { connection.disconnect(); active(null) }
     }
 
     fun put(file: File, signedUrl: String, progress: (Long, Long) -> Unit = { _, _ -> }) {
         if (stopped()) throw TingwuFailure("上传已取消，录音保留在手表")
         val destination = TingwuProtocol.uploadUrl(signedUrl)
+        TingwuProtocol.checkUploadExpiry(destination)
         val size = file.length(); val modified = file.lastModified()
         require(size > 0)
-        val connection = open(destination)
+        val connection = try { open(destination) } catch (error: IOException) { throw TingwuNetworkErrors.failure(error, requestNotSent = true) }
         active(connection)
         try {
             connection.instanceFollowRedirects = false
-            connection.connectTimeout = 15_000; connection.readTimeout = 60_000
+            connection.connectTimeout = 30_000; connection.readTimeout = 120_000
             connection.requestMethod = "PUT"; connection.doOutput = true
             // Only the signed URL authenticates storage requests; never send account cookies.
             connection.setRequestProperty("Content-Type", "audio/mp4")
@@ -144,7 +168,9 @@ class TingwuClient(
             }
             if (file.length() != size || file.lastModified() != modified) throw TingwuFailure("录音文件已变化，已停止上传")
             if (connection.responseCode == 403) throw TingwuFailure("上传地址已过期，请在手机检查该记录后重新上传")
-            if (connection.responseCode !in 200..299) throw TingwuFailure("录音尚未上传完成，请稍后重试")
-        } finally { connection.disconnect(); active(null) }
+            if (connection.responseCode !in 200..299) throw TingwuFailure("录音尚未上传完成，请稍后重试", retryable = connection.responseCode == 429 || connection.responseCode in 500..599)
+        } catch (failure: TingwuFailure) { throw failure }
+        catch (error: IOException) { throw TingwuNetworkErrors.failure(error) }
+        finally { connection.disconnect(); active(null) }
     }
 }

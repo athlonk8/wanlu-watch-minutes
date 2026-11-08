@@ -35,6 +35,7 @@
             android:exported="true"
             android:theme="@android:style/Theme.NoDisplay" />
         <activity android:name=".TingwuLoginActivity" android:exported="false" />
+        <activity android:name=".TingwuNetworkActivity" android:exported="false" />
         <service
             android:name=".RecorderService"
             android:exported="false"

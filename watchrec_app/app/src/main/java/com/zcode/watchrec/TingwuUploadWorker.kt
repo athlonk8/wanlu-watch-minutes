@@ -15,6 +15,8 @@ import java.net.HttpURLConnection
 import java.util.UUID
 import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
+import com.alibaba.sdk.android.oss.internal.OSSAsyncTask
+import com.alibaba.sdk.android.oss.model.ResumableUploadResult
 
 data class TingwuStatus(val message: String = "", val done: Boolean = false, val progress: Float = 0f, val needsReview: Boolean = false)
 
@@ -40,6 +42,27 @@ object TingwuUploads {
         status.value = emptyMap()
         RecordingStorage.recordings(ctx).forEach { file -> publish(read(ctx, key(account, file.name, file.length(), file.lastModified()))) }
     }
+    /** Called off the UI thread after account verification; preserve IDs and cloud state. */
+    fun resumeQueued(ctx: Context) {
+        val account = TingwuSession.accountKey.value.takeIf { it.isNotBlank() } ?: return
+        val manager = WorkManager.getInstance(ctx)
+        RecordingStorage.recordings(ctx).forEach { file ->
+            val key = key(account, file.name, file.length(), file.lastModified())
+            val job = read(ctx, key)
+            if (job.optString("account") != account || job.optString("phase") == "done") return@forEach
+            manager.getWorkInfosForUniqueWork("tingwu/$key").get(5, TimeUnit.SECONDS).forEach { work ->
+                if (work.state == WorkInfo.State.ENQUEUED && work.constraints.requiredNetworkType == NetworkType.CONNECTED) {
+                    val request = OneTimeWorkRequestBuilder<TingwuUploadWorker>().setId(work.id)
+                        .setInputData(workDataOf("name" to file.name, "account" to account, "key" to key))
+                        .setInitialDelay(work.initialDelayMillis, TimeUnit.MILLISECONDS)
+                        .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+                    work.tags.forEach { request.addTag(it) }
+                    // updateWork does not interrupt an attempt that started in the meantime.
+                    manager.updateWork(request.build()).get(5, TimeUnit.SECONDS)
+                }
+            }
+        }
+    }
     fun enqueue(ctx: Context, name: String, reviewed: Boolean = false) {
         val file = RecordingStorage.find(ctx, name) ?: error("录音不存在")
         val account = TingwuSession.accountKey.value
@@ -52,7 +75,9 @@ object TingwuUploads {
         save(ctx, key, job)
         val request = OneTimeWorkRequestBuilder<TingwuUploadWorker>()
             .setInputData(workDataOf("name" to name, "account" to account, "key" to key))
-            .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+            // A companion proxy can reach Tingwu before Android marks it VALIDATED.
+            // Check the real authenticated endpoint in the worker instead of waiting
+            // indefinitely on WorkManager's CONNECTED constraint. Offline work backs off.
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
             .addTag(TAG).addTag("name:$name").build()
         WorkManager.getInstance(ctx).enqueueUniqueWork("tingwu/$key", ExistingWorkPolicy.KEEP, request)
@@ -62,7 +87,8 @@ object TingwuUploads {
 class TingwuUploadWorker(ctx: Context, parameters: WorkerParameters) : Worker(ctx, parameters) {
     companion object { private val gate = Semaphore(1) }
     @Volatile private var connection: HttpURLConnection? = null
-    override fun onStopped() { connection?.disconnect() }
+    @Volatile private var multipart: OSSAsyncTask<ResumableUploadResult>? = null
+    override fun onStopped() { connection?.disconnect(); multipart?.cancel() }
 
     override fun doWork(): Result {
         val name = inputData.getString("name") ?: return Result.failure()
@@ -73,13 +99,15 @@ class TingwuUploadWorker(ctx: Context, parameters: WorkerParameters) : Worker(ct
         if (TingwuUploads.key(account, name, file.length(), file.lastModified()) != key) return Result.failure()
         if (!gate.tryAcquire()) return Result.retry()
         val job = TingwuUploads.read(ctx, key).put("name", name).put("account", account)
+        var creatingRequestAttempted = false
         fun save(message: String, phase: String? = null) {
             job.put("message", message)
             if (phase != null) job.put("phase", phase)
             TingwuUploads.save(ctx, key, job)
         }
+        var stage = "检查账号"
         try {
-            if (!TingwuSession.verify() || TingwuSession.accountKey.value != account) throw TingwuFailure("请连接原听悟账号后重试", true)
+            if (!TingwuSession.verify(active = { connection = it }) || TingwuSession.accountKey.value != account) throw TingwuFailure("请连接原听悟账号后重试", true)
             if (job.optString("phase") == "done") return Result.success()
             val manager = ctx.getSystemService(NotificationManager::class.java)
             manager.createNotificationChannel(NotificationChannel("tingwu-upload", "听悟直传", NotificationManager.IMPORTANCE_LOW))
@@ -90,6 +118,7 @@ class TingwuUploadWorker(ctx: Context, parameters: WorkerParameters) : Worker(ct
             val sessionCookie = CookieManager.getInstance().getCookie(TingwuSession.ORIGIN).orEmpty()
             val client = TingwuClient({ sessionCookie }, stopped = { isStopped }, active = { connection = it })
             if (job.optString("phase") == "starting") {
+                stage = "核对云端记录"
                 val response = client.api("getTransStatus", JSONObject().put("transIds", JSONArray().put(job.getString("transId"))).put("preview", 1))
                 val cloudStatus = TingwuProtocol.cloudStatus(response, job.getString("transId"))
                 job.put("lastCloudStatus", cloudStatus).put("needsReview", false)
@@ -97,6 +126,12 @@ class TingwuUploadWorker(ctx: Context, parameters: WorkerParameters) : Worker(ct
                     job.remove("putLink"); job.remove("getLink")
                     save(if (cloudStatus == 2) "已上传，听悟处理失败，请在手机检查" else "已上传听悟，手机查看结果", "done")
                     return Result.success()
+                }
+                if (cloudStatus == 3 && job.optBoolean("awaitingAcceptance")) {
+                    val checks = job.optInt("confirmationChecks") + 1
+                    job.put("confirmationChecks", checks)
+                    save(if (checks < 5) "录音已上传，等待听悟确认处理" else "录音已上传，听悟尚未确认处理，点重试继续检查")
+                    return if (checks < 5) Result.retry() else Result.failure()
                 }
                 if (cloudStatus == 3) save("正在继续提交听悟转写", "synced")
                 else { save("云端状态尚未确认，点重试继续检查"); return Result.failure() }
@@ -106,32 +141,63 @@ class TingwuUploadWorker(ctx: Context, parameters: WorkerParameters) : Worker(ct
                 save("上次请求结果未确认，请先在手机听悟检查该记录")
                 return Result.failure()
             }
+            if (job.optString("phase") == "uploading" && job.optString("uploadMode") != "multipart") {
+                val expired = runCatching { TingwuProtocol.checkUploadExpiry(TingwuProtocol.uploadUrl(job.getString("putLink"))); false }
+                    .getOrElse { if (it is TingwuFailure && it.message.orEmpty().contains("过期")) true else throw it }
+                if (expired) {
+                    stage = "核对过期上传"
+                    val response = client.api("getTransStatus", JSONObject().put("transIds", JSONArray().put(job.getString("transId"))).put("preview", 1))
+                    val cloudStatus = TingwuProtocol.cloudStatus(response, job.getString("transId"))
+                    if (cloudStatus in 0..1) {
+                        job.remove("putLink"); job.remove("getLink")
+                        save("已上传听悟，手机查看结果", "done")
+                        return Result.success()
+                    }
+                    if (TingwuUploadRecovery.replaceConfirmedExpiredUpload(job, response)) save("原上传已过期，正在重新建立上传")
+                    else throw TingwuFailure("上传地址已过期，云端状态尚未确认，请先在手机检查记录")
+                }
+            }
             if (job.optString("phase").isBlank()) {
+                stage = "建立听悟记录"
                 job.put("taskId", UUID.randomUUID().toString()).put("needsReview", false)
                 save("正在建立听悟记录", "creating")
                 val tag = JSONObject().put("showName", file.nameWithoutExtension).put("fileFormat", "m4a").put("fileType", "local")
                     .put("lang", "cn").put("roleSplitNum", 0).put("translateSwitch", "0").put("transTargetValue", "")
                     .put("originalTag", "{\"isVideo\":false}").put("client", "web")
-                val response = client.api("generatePutLink", JSONObject().put("taskId", job.getString("taskId")).put("useSts", 0)
+                creatingRequestAttempted = true
+                val useMultipart = file.length() >= TingwuMultipartUpload.THRESHOLD
+                val response = client.api("generatePutLink", JSONObject().put("taskId", job.getString("taskId")).put("useSts", if (useMultipart) 1 else 0)
                     .put("fileSize", file.length()).put("dirId", 0).put("fileContentType", "audio/mp4").put("tag", tag))
                 val data = response.getJSONObject("data")
                 val put = data.optString("putLink"); val get = data.optString("getLink"); val trans = data.optString("transId")
-                TingwuProtocol.uploadUrl(put)
+                if (useMultipart) {
+                    val grant = data.optJSONObject("sts") ?: throw TingwuFailure("听悟未提供分片上传授权，请保留本地录音")
+                    TingwuStorageGrant(grant)
+                    job.put("sts", grant).put("uploadMode", "multipart")
+                } else TingwuProtocol.uploadUrl(put)
                 if (get.isBlank() || trans.isBlank()) throw TingwuFailure("听悟上传协议已变化，请保留本地录音")
                 job.put("putLink", put).put("getLink", get).put("transId", trans)
                 save("正在直接上传录音", "uploading")
             }
             if (job.optString("phase") == "uploading") {
+                stage = "上传录音文件"
                 var last = 0L
-                client.put(file, job.getString("putLink")) { sent, total ->
+                val progress: (Long, Long) -> Unit = { sent, total ->
                     val now = System.currentTimeMillis()
                     if (now - last > 500 || sent == total) {
-                        job.put("progress", sent.toDouble() / total); save("正在上传 ${(sent * 100 / total)}%"); last = now
+                        job.put("progress", sent.toDouble() / total)
+                        save(if (sent == total) "文件已发送，等待上传回执" else "正在上传 ${(sent * 100 / total)}%")
+                        last = now
                     }
                 }
+                if (job.optString("uploadMode") == "multipart") {
+                    TingwuMultipartUpload.put(ctx, file, key, job.getJSONObject("sts"), { isStopped }, { multipart = it }, progress)
+                } else client.put(file, job.getString("putLink"), progress)
+                job.remove("sts")
                 save("听悟正在确认录音", "uploaded")
             }
             if (job.optString("phase") == "uploaded") {
+                stage = "确认录音文件"
                 val metadata = MediaMetadataRetriever()
                 val duration = try { metadata.setDataSource(file.absolutePath); metadata.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()?.div(1000) } finally { metadata.release() }
                 val body = JSONObject().put("fileLink", job.getString("getLink")).put("fileSize", file.length()).put("transId", job.getString("transId"))
@@ -140,6 +206,7 @@ class TingwuUploadWorker(ctx: Context, parameters: WorkerParameters) : Worker(ct
                 save("正在提交听悟转写", "synced")
             }
             if (job.optString("phase") == "synced") {
+                stage = "提交听悟转写"
                 save("正在提交听悟转写", "starting")
                 val cloudStatus = client.startOrReconcile(job.getString("transId"), JSONObject().put("lang", "cn").put("roleSplitNum", 0).put("translateSwitch", "0"))
                 job.put("lastCloudStatus", cloudStatus).remove("serviceCode")
@@ -149,16 +216,14 @@ class TingwuUploadWorker(ctx: Context, parameters: WorkerParameters) : Worker(ct
             return Result.success()
         } catch (error: Exception) {
             if (error is TingwuFailure && error.loginRequired) TingwuSession.connected.value = false
-            if (error is TingwuFailure && error.serviceCode.isNotBlank()) {
-                job.put("serviceCode", error.serviceCode)
-                // An explicit rejection is safe to retry on this same cloud record.
-                if (job.optString("phase") == "starting") job.put("phase", "synced").put("needsReview", false)
-            }
-            if (job.optString("phase") == "creating") job.put("needsReview", true)
-            if (job.optString("phase") == "uploading" && error is TingwuFailure && error.message?.contains("过期") == true) job.put("needsReview", true)
-            save(if (isStopped) "上传已暂停，录音保留在手表" else if (error is TingwuFailure) error.message.orEmpty() else "网络或服务暂不可用，录音保留在手表，请稍后重试")
-            if (job.optString("phase").isBlank() && error !is TingwuFailure && !isStopped && runAttemptCount < 5) return Result.retry()
+            TingwuUploadRecovery.recover(job, error, creatingRequestAttempted)
+            val retry = !isStopped && runAttemptCount < 5 && TingwuUploadRecovery.retryable(job, error)
+            job.put("lastErrorStage", stage)
+            job.put("lastErrorType", (error.cause ?: error).javaClass.simpleName)
+            val message = "$stage：" + if (error is TingwuFailure) error.message.orEmpty() else "上传遇到异常，录音保留在手表，请重试"
+            save(if (isStopped) "上传已暂停，录音保留在手表" else message + if (retry) "；等待自动重试" else "")
+            if (retry) return Result.retry()
             return Result.failure()
-        } finally { connection?.disconnect(); connection = null; gate.release() }
+        } finally { connection?.disconnect(); connection = null; multipart = null; gate.release() }
     }
 }
