@@ -62,4 +62,31 @@ class TingwuUploadRecoveryTest {
         assertEquals("older-task", job.getString("taskId"))
         assertTrue(job.getBoolean("needsReview"))
     }
+
+    @Test fun laggingCloudAcceptanceKeepsRecordInConfirmationInsteadOfResubmitting() {
+        val job = JSONObject().put("phase", "starting").put("transId", "existing")
+        val failure = TingwuFailure("pending", serviceCode = "-1", retryable = true)
+        TingwuUploadRecovery.recover(job, failure)
+        assertEquals("starting", job.getString("phase"))
+        assertTrue(job.getBoolean("awaitingAcceptance"))
+        assertTrue(TingwuUploadRecovery.retryable(job, failure))
+        assertEquals("existing", job.getString("transId"))
+    }
+
+    @Test fun onlyTheExactCloudConfirmedExpiredUploadCanBeRebuilt() {
+        val job = JSONObject().put("phase", "uploading").put("transId", "selected")
+            .put("putLink", "expired-link").put("account", "same-account").put("name", "REC_same.m4a")
+        for (record in listOf("{\"transId\":\"other\",\"status\":2,\"statusMsg\":\"TRS.UploadingExpired\"}",
+            "{\"transId\":\"selected\",\"status\":2,\"statusMsg\":\"TRS.OtherFailure\"}",
+            "{\"transId\":\"selected\",\"status\":4,\"statusMsg\":\"TRS.UploadingExpired\"}")) {
+            assertFalse(TingwuUploadRecovery.replaceConfirmedExpiredUpload(job, JSONObject("{\"code\":\"0\",\"data\":[$record]}")))
+            assertEquals("selected", job.getString("transId"))
+        }
+        assertTrue(TingwuUploadRecovery.replaceConfirmedExpiredUpload(job,
+            JSONObject("{\"code\":\"0\",\"data\":[{\"transId\":\"selected\",\"status\":2,\"statusMsg\":\"TRS.UploadingExpired\"}]}")))
+        assertFalse(job.has("phase")); assertFalse(job.has("putLink")); assertFalse(job.has("transId"))
+        assertEquals("selected", job.getString("expiredTransId"))
+        assertEquals("same-account", job.getString("account"))
+        assertEquals("REC_same.m4a", job.getString("name"))
+    }
 }

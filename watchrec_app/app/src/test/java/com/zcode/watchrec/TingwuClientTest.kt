@@ -181,4 +181,32 @@ class TingwuClientTest {
         assertEquals(0, client.startOrReconcile("selected", JSONObject()))
         assertEquals(3, requests)
     }
+
+    @Test fun genericStartRejectionWithLaggingStatusRequestsConfirmationWithoutAnotherSubmission() {
+        val actions = mutableListOf<String>()
+        val client = TingwuClient({ "synthetic" }, open = {
+            actions += it.query
+            Connection(it, body = if (it.query.startsWith("startTrans")) "{\"code\":\"-1\"}" else "{\"code\":\"0\",\"data\":[{\"transId\":\"selected\",\"status\":3}]}")
+        })
+        val failure = assertThrows(TingwuFailure::class.java) { client.startOrReconcile("selected", JSONObject()) }
+        assertEquals("-1", failure.serviceCode)
+        assertTrue(failure.retryable)
+        assertEquals(1, actions.count { it.startsWith("startTrans") })
+    }
+
+    @Test fun expiredSignedAddressIsRejectedBeforeReadingOrSendingTheRecording() {
+        var opened = false
+        val client = TingwuClient({ "synthetic" }, open = { opened = true; Connection(it) })
+        val file = fixture()
+        try {
+            val failure = assertThrows(TingwuFailure::class.java) {
+                client.put(file, "https://bucket.oss-cn-shanghai.aliyuncs.com/a?Expires=1&Signature=hidden")
+            }
+            assertTrue(failure.message.orEmpty().contains("过期"))
+            assertFalse(opened)
+            assertEquals(150001, file.length().toInt())
+            assertFalse(failure.message.orEmpty().contains("hidden"))
+            TingwuProtocol.checkUploadExpiry(URL("https://bucket.oss-cn-shanghai.aliyuncs.com/a?Expires=100"), 99_000)
+        } finally { file.delete() }
+    }
 }

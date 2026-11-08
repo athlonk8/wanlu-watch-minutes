@@ -36,6 +36,7 @@ class TingwuLoginActivity : Activity() {
     private var usedFallback = false
     private var failedUrl: String? = null
     private var foreground = false
+    private var embeddedLoginOpened = false
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -65,6 +66,7 @@ class TingwuLoginActivity : Activity() {
                 override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
                     pageFailed = false
                     failedUrl = null
+                    embeddedLoginOpened = false
                     status.text = "正在加载官方登录…"
                 }
                 override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
@@ -116,7 +118,16 @@ class TingwuLoginActivity : Activity() {
         root.addView(buttons, LinearLayout.LayoutParams(-1, dp(50)).apply { setMargins(dp(29), dp(4), dp(29), 0) })
         setContentView(root)
         browser.loadUrl("${TingwuSession.ORIGIN}/register/login?tw_redirect=${Uri.encode(TingwuSession.ORIGIN + "/home")}")
-        handler.postDelayed(object : Runnable { override fun run() { if (!closed) { if (foreground) { prepareQrLayout(); checkFallback(); checkSession() }; handler.postDelayed(this, 4_000) } } }, 4_000)
+        handler.postDelayed(object : Runnable { override fun run() { if (!closed) {
+            if (foreground) {
+                prepareQrLayout(); checkFallback()
+                // A usable DOM/QR can precede onPageFinished on a slow companion route.
+                // Only Tingwu's embedded entry is clicked; never periodically reload Ali's QR.
+                if (Uri.parse(browser.url.orEmpty()).host == "tingwu.aliyun.com") showOfficialLogin()
+                checkSession()
+            }
+            handler.postDelayed(this, 4_000)
+        } } }, 4_000)
     }
 
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
@@ -143,7 +154,7 @@ class TingwuLoginActivity : Activity() {
 
     private fun showOfficialLogin(retry: Boolean = false) {
         if (closed || !foreground || TingwuSession.connected.value) return
-        if (retry) usedFallback = false
+        if (retry) { usedFallback = false; embeddedLoginOpened = false }
         val host = Uri.parse(browser.url.orEmpty()).host
         if (pageFailed) {
             if (retry) browser.loadUrl(failedUrl ?: "${TingwuSession.ORIGIN}/register/login?tw_redirect=${Uri.encode(TingwuSession.ORIGIN + "/home")}")
@@ -152,11 +163,14 @@ class TingwuLoginActivity : Activity() {
         if (host == "account.aliyun.com") { browser.reload(); return }
         if (host != "tingwu.aliyun.com") return
         checkFallback()
+        if (embeddedLoginOpened) return
         browser.evaluateJavascript("""(function(){
+          var dialog=document.querySelector('.aliyun-login-wrapper');
+          if(dialog&&getComputedStyle(dialog).display!=='none'&&dialog.getBoundingClientRect().height>0)return true;
           var nodes=document.querySelectorAll('button,a,span,div');
           for(var i=0;i<nodes.length;i++) if(nodes[i].textContent.trim()==='立即登录'){nodes[i].click();return true;}
           return false;
-        })()""".trimIndent(), null)
+        })()""".trimIndent()) { value -> if (value == "true") embeddedLoginOpened = true }
         handler.postDelayed({ prepareQrLayout() }, 1_000)
     }
 
@@ -196,7 +210,10 @@ class TingwuLoginActivity : Activity() {
               if(!css){css=document.createElement('style');css.id='wanlu-account-qr-layout';document.head.appendChild(css);}
               css.textContent='.login-core{position:fixed!important;left:0!important;top:0!important;width:100vw!important;height:100vh!important;margin:0!important;z-index:20!important;background:white!important}.login-core,.login-core *{will-change:auto!important}';
               q.style.cssText='position:fixed!important;left:'+(v.offsetLeft+(v.width-144*s)/2)+'px!important;top:'+(v.offsetTop+6)+'px!important;width:144px!important;height:144px!important;margin:0!important;transform:scale('+s+')!important;transform-origin:0 0!important;z-index:1!important;background:white!important';
-            })()""".trimIndent(), null)
+              return Array.from(q.querySelectorAll('img,canvas,svg')).some(function(e){return e.tagName==='IMG'?e.naturalWidth>0:true;});
+            })()""".trimIndent()) { ready ->
+                if (!closed && !pageFailed && ready == "true" && !TingwuSession.connected.value && Uri.parse(browser.url.orEmpty()).host == "account.aliyun.com") status.text = "官方二维码 · 支付宝扫码"
+            }
             return
         }
         if (host != "tingwu.aliyun.com") return

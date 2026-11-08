@@ -47,6 +47,7 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     implementation("androidx.work:work-runtime-ktx:2.9.1")
     implementation("com.google.zxing:core:3.5.3")
+    implementation("com.aliyun.dpa:oss-android-sdk:2.9.21")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
     testImplementation("org.robolectric:robolectric:4.16.1")

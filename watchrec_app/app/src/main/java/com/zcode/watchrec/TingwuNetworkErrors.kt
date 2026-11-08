@@ -19,5 +19,5 @@ internal object TingwuNetworkErrors {
 
     fun failure(error: IOException, requestNotSent: Boolean = false) = TingwuFailure(
         message(error), requestNotSent = requestNotSent, retryable = error !is SSLException
-    )
+    ).apply { initCause(error) }
 }

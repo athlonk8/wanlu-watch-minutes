@@ -54,7 +54,7 @@ class TingwuNetworkActivity : ComponentActivity() {
                     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 32.dp, vertical = 32.dp),
                         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text("共享网络检查", fontSize = 16.sp)
-                        lines.forEach { Text(it, fontSize = 11.sp, textAlign = TextAlign.Center) }
+                        lines.forEach { Text(it, fontSize = 11.sp, lineHeight = 15.sp, textAlign = TextAlign.Center) }
                         if (running) Text("正在检查…", fontSize = 11.sp)
                         GlossySecondaryButton(onClick = { check() }, enabled = !running) { Text("重新检查", fontSize = 11.sp) }
                         GlossySecondaryButton(onClick = { finish() }) { Text("返回", fontSize = 11.sp) }
